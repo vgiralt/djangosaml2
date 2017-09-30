@@ -19,6 +19,10 @@ Thanks to plumdog
 
 Thanks to plumdog
 
+UNRELEASED
+----------
+- Allowed creating Users with multiple required fields.
+
 0.17.1 (2018-07-16)
 ----------
 - A 403 (permission denied) is now raised if a SAMLResponse is replayed, instead of 500.

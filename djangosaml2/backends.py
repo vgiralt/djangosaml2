@@ -147,19 +147,21 @@ class Saml2Backend(ModelBackend):
                      main_attribute)
         django_user_main_attribute = self.get_django_user_main_attribute()
         user_query_args = self.get_user_query_args(main_attribute)
-        user_create_defaults = {django_user_main_attribute: main_attribute}
 
         User = get_saml_user_model()
+        built = False
         try:
-            user, created = User.objects.get_or_create(
-                defaults=user_create_defaults, **user_query_args)
+            user = User.objects.get(**user_query_args)
+        except User.DoesNotExist:
+            user = User(**{django_user_main_attribute: main_attribute})
+            built = True
         except MultipleObjectsReturned:
             logger.error("There are more than one user with %s = %s",
                          django_user_main_attribute, main_attribute)
             return None
 
-        if created:
-            logger.debug('New user created')
+        if built:
+            logger.debug('Configuring new user "%s"', main_attribute)
             user = self.configure_user(user, attributes, attribute_mapping)
         else:
             logger.debug('User updated')
