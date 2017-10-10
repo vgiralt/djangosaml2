@@ -15,7 +15,6 @@
 
 import codecs
 import os
-import sys
 from setuptools import setup, find_packages
 
 
@@ -63,4 +62,8 @@ setup(
         'Django>=2.2',
         'pysaml2>=4.6.0',
         ],
+    tests_require=[
+        # Provides assert_called_once.
+        'mock;python_version < "3.6"',
+    ]
     )
