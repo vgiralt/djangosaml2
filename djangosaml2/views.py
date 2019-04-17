@@ -338,7 +338,14 @@ def assertion_consumer_service(request,
     if not relay_state:
         logger.warning('The RelayState parameter exists but is empty')
         relay_state = default_relay_state
-    if not is_safe_url_compat(url=relay_state, allowed_hosts={request.get_host()}):
+    
+    # Ensure the user-originating redirection url is safe.
+    # By setting SAML_ALLOWED_HOSTS in settings.py the user may provide a list of "allowed"
+    # hostnames for post-login redirects, much like one would specify ALLOWED_HOSTS .
+    # If this setting is absent, the default is to use the hostname that was used for the current
+    # request.
+    saml_allowed_hosts = set(getattr(settings, 'SAML_ALLOWED_HOSTS', [request.get_host()]))
+    if not is_safe_url_compat(url=relay_state, allowed_hosts=saml_allowed_hosts):
         relay_state = settings.LOGIN_REDIRECT_URL
     logger.debug('Redirecting to the RelayState: %s', relay_state)
     return HttpResponseRedirect(relay_state)
