@@ -36,6 +36,7 @@ from django.utils.six import text_type, binary_type, PY3
 from django.views.decorators.csrf import csrf_exempt
 
 from saml2 import BINDING_HTTP_REDIRECT, BINDING_HTTP_POST
+from saml2.client_base import LogoutError
 from saml2.metadata import entity_descriptor
 from saml2.ident import code, decode
 from saml2.sigver import MissingKey
@@ -376,7 +377,13 @@ def logout(request, config_loader_path=None):
             'The session does not contain the subject id for user %s',
             request.user)
 
-    result = client.global_logout(subject_id)
+    try:
+        result = client.global_logout(subject_id)
+    except LogoutError as exp:
+        logger.exception('Error Handled - SLO not supported by IDP: {}'.format(exp))
+        auth.logout(request)
+        state.sync()
+        return HttpResponseRedirect('/')
 
     state.sync()
 
