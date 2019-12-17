@@ -37,6 +37,7 @@ from saml2.response import (SignatureError, StatusAuthnFailed, StatusError,
                             UnsolicitedResponse)
 from saml2.s_utils import UnsupportedBinding
 from saml2.sigver import MissingKey
+from saml2.samlp import AuthnRequest
 from saml2.validate import ResponseLifetimeExceed, ToEarly
 from saml2.xmldsig import (  # support for SHA1 is required by spec
     SIG_RSA_SHA1, SIG_RSA_SHA256)
@@ -205,6 +206,9 @@ def login(request,
                 binding=binding,
                 **kwargs)
             try:
+                if isinstance(request_xml, AuthnRequest):
+                    # request_xml will be an instance of AuthnRequest if the message is not signed
+                    request_xml = str(request_xml)
                 saml_request = base64.b64encode(bytes(request_xml, 'UTF-8')).decode('utf-8')
 
                 http_response = render(request, post_binding_form_template, {
