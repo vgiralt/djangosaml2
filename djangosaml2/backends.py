@@ -18,45 +18,28 @@ import logging
 from django.conf import settings
 from django.contrib import auth
 from django.contrib.auth.backends import ModelBackend
-from django.core.exceptions import (
-    MultipleObjectsReturned, ImproperlyConfigured,
-)
+from django.core.exceptions import (ImproperlyConfigured,
+                                    MultipleObjectsReturned)
 
-from djangosaml2.signals import pre_user_save
-
+from .signals import pre_user_save
 
 logger = logging.getLogger('djangosaml2')
 
 
 def get_model(model_path):
+    from django.apps import apps
     try:
-        from django.apps import apps
         return apps.get_model(model_path)
-    except ImportError:
-        # Django < 1.7 (cannot use the new app loader)
-        from django.db.models import get_model as django_get_model
-        try:
-            app_label, model_name = model_path.split('.')
-        except ValueError:
-            raise ImproperlyConfigured("SAML_USER_MODEL must be of the form "
-                "'app_label.model_name'")
-        user_model = django_get_model(app_label, model_name)
-        if user_model is None:
-            raise ImproperlyConfigured("SAML_USER_MODEL refers to model '%s' "
-                "that has not been installed" % model_path)
-        return user_model
+    except LookupError:
+        raise ImproperlyConfigured("SAML_USER_MODEL refers to model '%s' that has not been installed" % model_path)
+    except ValueError:
+        raise ImproperlyConfigured("SAML_USER_MODEL must be of the form 'app_label.model_name'")
 
 
 def get_saml_user_model():
-    try:
-        # djangosaml2 custom user model
+    if hasattr(settings, 'SAML_USER_MODEL'):
         return get_model(settings.SAML_USER_MODEL)
-    except AttributeError:
-        try:
-            # Django 1.5 Custom user model
-            return auth.get_user_model()
-        except AttributeError:
-            return auth.models.User
+    return auth.get_user_model()
 
 
 class Saml2Backend(ModelBackend):
