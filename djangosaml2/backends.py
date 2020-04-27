@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import logging
+from typing import Any, Optional, Tuple
 
 from django.conf import settings
 from django.contrib import auth
@@ -37,18 +38,19 @@ def get_model(model_path):
 
 
 def get_saml_user_model():
+    ''' Returns the user model specified in the settings, or the default one from this Django installation '''
     if hasattr(settings, 'SAML_USER_MODEL'):
         return get_model(settings.SAML_USER_MODEL)
     return auth.get_user_model()
 
 
-def get_django_user_lookup_attribute(userModel):
+def get_django_user_lookup_attribute(userModel) -> str:
     if hasattr(settings, 'SAML_DJANGO_USER_MAIN_ATTRIBUTE'):
         return settings.SAML_DJANGO_USER_MAIN_ATTRIBUTE
     return getattr(userModel, 'USERNAME_FIELD', 'username')
 
 
-def set_attribute(obj, attr, value):
+def set_attribute(obj, attr, value) -> bool:
     """ Set an attribute of an object to a specific value, if it wasn't that already.
         Return True if the attribute was changed and False otherwise.
     """
@@ -61,28 +63,42 @@ def set_attribute(obj, attr, value):
     return False
 
 
-class Saml2Backend(ModelBackend):
-    def __init__(self):
-        super().__init__()
-        self.UserModel = get_saml_user_model()
+UserModel = get_saml_user_model()
 
-    def _extract_user_identifier_value(self, session_info, attributes, attribute_mapping):
-        """ Extract the user identifier value from the saml attributes.
-            Returns None if no identifier could be extracted from the saml payload.
+
+class Saml2Backend(ModelBackend):
+    def is_authorized(self, attributes, attribute_mapping) -> bool:
+        """ Hook to allow custom authorization policies based on SAML attributes. """
+        return True
+
+    def clean_attributes(self, attributes: dict) -> dict:
+        """Hook to clean attributes from the SAML response. """
+        return attributes
+
+    def clean_user_main_attribute(self, main_attribute):
+        """ Clean the extracted user identifying value. No-op by default. """
+        return main_attribute
+
+    def _extract_user_identifier_params(self, session_info, attributes, attribute_mapping) -> Tuple[str, Optionaly[Any]]:
+        """ Returns the attribute to perform a user lookup on, and the value to use for it.
+            The value could be the name_id, or any other saml attribute from the request.
         """
+        # Lookup key
+        user_lookup_key = get_django_user_lookup_attribute(UserModel)
+
+        # Lookup value
         if getattr(settings, 'SAML_USE_NAME_ID_AS_USERNAME', False):
             if 'name_id' in session_info:
                 logger.debug('name_id: %s', session_info['name_id'])
-                saml_user_identifier = session_info['name_id'].text
+                user_lookup_value = session_info['name_id'].text
             else:
                 logger.error('The nameid is not available. Cannot find user without a nameid.')
-                saml_user_identifier = None
+                user_lookup_value = None
         else:
             # Obtain the value of the custom attribute to use
-            user_lookup_attribute = get_django_user_lookup_attribute(self.UserModel)
-            saml_user_identifier = self._get_attribute_value(user_lookup_attribute, attributes, attribute_mapping)
+            user_lookup_value = self._get_attribute_value(user_lookup_key, attributes, attribute_mapping)
 
-        return self.clean_user_main_attribute(saml_user_identifier)
+        return user_lookup_key, self.clean_user_main_attribute(user_lookup_value)
 
     def _get_attribute_value(self, django_field, attributes, attribute_mapping):
         saml_attribute = None
@@ -96,31 +112,30 @@ class Saml2Backend(ModelBackend):
                                  'session is expired.')
         return saml_attribute
 
-    def get_or_create_user(self, user_identifier, create_unknown_user, **kwargs):
+    def get_or_create_user(self, user_lookup_key, user_lookup_value, create_unknown_user, **kwargs) -> Tuple[Optional[settings.AUTH_USER_MODEL], bool]:
         """ Look up the user to authenticate. If he doesn't exist, this method creates him (if so desired).
             The default implementation looks only at the user_identifier. Override this method in order to do more complex behaviour,
             e.g. customize this per IdP. The kwargs contain these additional params: session_info, attribute_mapping, attributes, request.
             The identity provider id can be found in kwargs['session_info']['issuer]
         """
-        # Construct query parameters to query the userModel with.
-        user_lookup_attribute = get_django_user_lookup_attribute(self.UserModel)
+        # Construct query parameters to query the userModel with. An additional lookup modifier could be specified in the settings.
         user_query_args = {
-            user_lookup_attribute + getattr(settings, 'SAML_DJANGO_USER_MAIN_ATTRIBUTE_LOOKUP', ''): user_identifier
+            user_lookup_key + getattr(settings, 'SAML_DJANGO_USER_MAIN_ATTRIBUTE_LOOKUP', ''): user_lookup_value
         }
 
         # Lookup existing user
         user, created = None, False
         try:
-            user = self.UserModel.objects.get(**user_query_args)
+            user = UserModel.objects.get(**user_query_args)
         except MultipleObjectsReturned:
             logger.error("Multiple users match, lookup: %s", user_query_args)
-        except self.UserModel.DoesNotExist:
+        except UserModel.DoesNotExist:
             logger.error('The user does not exist, lookup: %s', user_query_args)
 
             # Create new one if desired by settings
             if create_unknown_user:
                 try:
-                    user, created = self.UserModel.objects.get_or_create(**user_query_args, defaults={user_lookup_attribute: user_identifier})
+                    user, created = UserModel.objects.get_or_create(**user_query_args, defaults={user_lookup_key: user_lookup_value})
                 except Exception as e:
                     logger.error('Could not create new user: %s', e)
 
@@ -149,48 +164,28 @@ class Saml2Backend(ModelBackend):
             logger.error('Request not authorized')
             return None
 
-        user_identifier = self._extract_user_identifier_value(session_info, attributes, attribute_mapping)
-        if not user_identifier:
+        user_lookup_key, user_lookup_value = self._extract_user_identifier_params(session_info, attributes, attribute_mapping)
+        if not user_lookup_value:
             logger.error('Could not determine user identifier')
             return None
 
         user, created = self.get_or_create_user(
-            user_identifier, create_unknown_user,
+            user_lookup_key, user_lookup_value, create_unknown_user,
             request=request, session_info=session_info, attributes=attributes, attribute_mapping=attribute_mapping
         )
 
         # Update user with new attributes from incoming request
         if user is not None:
             user = self.update_user(user, attributes, attribute_mapping, force_save=created)
-            logger.debug('User updated with incoming attributes')
 
         return user
 
-    def is_authorized(self, attributes, attribute_mapping):
-        """Hook to allow custom authorization policies based on
-        SAML attributes.
-        """
-        return True
-
-    def clean_attributes(self, attributes):
-        """Hook to clean attributes from the SAML response."""
-        return attributes
-
-    def clean_user_main_attribute(self, main_attribute):
-        """Performs any cleaning on the user main attribute (which
-        usually is "username") prior to using it to get or
-        create the user object.  Returns the cleaned attribute.
-
-        By default, returns the attribute unchanged.
-        """
-        return main_attribute
-
     def update_user(self, user, attributes, attribute_mapping, force_save=False):
-        """Update a user with a set of attributes and returns the updated user.
+        """ Update a user with a set of attributes and returns the updated user.
 
-        By default it uses a mapping defined in the settings constant
-        SAML_ATTRIBUTE_MAPPING. For each attribute, if the user object has
-        that field defined it will be set.
+            By default it uses a mapping defined in the settings constant
+            SAML_ATTRIBUTE_MAPPING. For each attribute, if the user object has
+            that field defined it will be set.
         """
         if not attribute_mapping:
             return user
@@ -214,8 +209,7 @@ class Saml2Backend(ModelBackend):
 
                     user_modified = user_modified or modified
                 else:
-                    logger.debug(
-                        'Could not find attribute "%s" on user "%s"', attr, user)
+                    logger.debug('Could not find attribute "%s" on user "%s"', attr, user)
 
         logger.debug('Sending the pre_save signal')
         signal_modified = any(
@@ -228,5 +222,6 @@ class Saml2Backend(ModelBackend):
 
         if user_modified or signal_modified or force_save:
             user.save()
+            logger.debug('User updated with incoming attributes')
 
         return user
