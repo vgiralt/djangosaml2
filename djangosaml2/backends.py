@@ -176,11 +176,11 @@ class Saml2Backend(ModelBackend):
 
         # Update user with new attributes from incoming request
         if user is not None:
-            user = self.update_user(user, attributes, attribute_mapping, force_save=created)
+            user = self._update_user(user, attributes, attribute_mapping, force_save=created)
 
         return user
 
-    def update_user(self, user, attributes, attribute_mapping, force_save=False):
+    def _update_user(self, user, attributes, attribute_mapping, force_save=False):
         """ Update a user with a set of attributes and returns the updated user.
 
             By default it uses a mapping defined in the settings constant

@@ -55,14 +55,14 @@ class Saml2BackendTests(TestCase):
             'cn': ('John', ),
             'sn': ('Doe', ),
             }
-        backend.update_user(user, attributes, attribute_mapping)
+        backend._update_user(user, attributes, attribute_mapping)
         self.assertEqual(user.email, 'john@example.com')
         self.assertEqual(user.first_name, 'John')
         self.assertEqual(user.last_name, 'Doe')
 
         attribute_mapping['saml_age'] = ('age', )
         attributes['saml_age'] = ('22', )
-        backend.update_user(user, attributes, attribute_mapping)
+        backend._update_user(user, attributes, attribute_mapping)
         self.assertEqual(user.age, '22')
 
     def test_update_user_callable_attributes(self):
@@ -81,7 +81,7 @@ class Saml2BackendTests(TestCase):
             'cn': ('John', ),
             'sn': ('Doe', ),
             }
-        backend.update_user(user, attributes, attribute_mapping)
+        backend._update_user(user, attributes, attribute_mapping)
         self.assertEqual(user.email, 'john@example.com')
         self.assertEqual(user.first_name, 'John')
         self.assertEqual(user.last_name, 'Doe')
@@ -103,7 +103,7 @@ class Saml2BackendTests(TestCase):
             'sn': (),
             }
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
-            backend.update_user(user, attributes, attribute_mapping)
+            backend._update_user(user, attributes, attribute_mapping)
         self.assertEqual(user.email, 'john@example.com')
         self.assertEqual(user.first_name, 'John')
         # empty attribute list: no update
