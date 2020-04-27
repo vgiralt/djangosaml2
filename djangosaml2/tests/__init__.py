@@ -53,6 +53,8 @@ except ImportError:
 
 User = get_user_model()
 
+PY_VERSION = sys.version_info[:2]
+
 
 class SAML2Tests(TestCase):
 
