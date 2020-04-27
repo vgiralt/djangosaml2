@@ -316,7 +316,7 @@ def assertion_consumer_service(request,
                              create_unknown_user=create_unknown_user)
     if user is None:
         logger.warning("Could not authenticate user received in SAML Assertion. Session info: %s", session_info)
-        return fail_acs_response(request, exception=Exception('No user could be authenticated.'))
+        return fail_acs_response(request, exception=PermissionDenied('No user could be authenticated.'))
 
     auth.login(request, user)
     _set_subject_id(request.session, session_info['name_id'])

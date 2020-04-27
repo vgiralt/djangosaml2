@@ -7,6 +7,6 @@
 from django.shortcuts import render
 
 
-def template_failure(request, exception=None, **kwargs):
+def template_failure(request, exception=None, status=403, **kwargs):
     """ Renders a simple template with an error message. """
-    return render(request, 'djangosaml2/login_error.html', {'exception': exception}, status=kwargs.get('status', 403))
+    return render(request, 'djangosaml2/login_error.html', {'exception': exception}, status=status)
