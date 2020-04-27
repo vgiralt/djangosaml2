@@ -50,14 +50,14 @@ def get_django_user_lookup_attribute(userModel) -> str:
     return getattr(userModel, 'USERNAME_FIELD', 'username')
 
 
-def set_attribute(obj, attr, value) -> bool:
+def set_attribute(obj, attr, new_value) -> bool:
     """ Set an attribute of an object to a specific value, if it wasn't that already.
         Return True if the attribute was changed and False otherwise.
     """
 
     old_value = getattr(obj, attr)
-    if cleaned_value != old_value:
-        setattr(obj, attr, cleaned_value)
+    if new_value != old_value:
+        setattr(obj, attr, new_value)
         return True
 
     return False
