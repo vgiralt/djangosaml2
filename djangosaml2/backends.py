@@ -79,7 +79,7 @@ class Saml2Backend(ModelBackend):
         """ Clean the extracted user identifying value. No-op by default. """
         return main_attribute
 
-    def _extract_user_identifier_params(self, session_info, attributes, attribute_mapping) -> Tuple[str, Optionaly[Any]]:
+    def _extract_user_identifier_params(self, session_info, attributes, attribute_mapping) -> Tuple[str, Optional[Any]]:
         """ Returns the attribute to perform a user lookup on, and the value to use for it.
             The value could be the name_id, or any other saml attribute from the request.
         """
