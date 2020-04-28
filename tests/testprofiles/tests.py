@@ -26,10 +26,10 @@ from djangosaml2.backends import (Saml2Backend, get_model, get_saml_user_model, 
 
 from .models import TestUser
 
-User = get_user_model()
+User = get_user_model()  # = TestUser
 
 
-class BackendUtilsTests(TestCase):
+class BackendUtilMethodsTests(TestCase):
     def test_get_model_ok(self):
         user_model = get_model('testprofiles.TestUser')
         self.assertEqual(user_model, TestUser)
@@ -84,13 +84,14 @@ class BackendUtilsTests(TestCase):
         self.assertEqual(u.custom_attribute, 'new_value')
 
 
-class Saml2BackendTests(TestCase):
+class DefaultSaml2BackendTests(TestCase):
+
+    def setUp(self):
+        self.backend = Saml2Backend()
+        self.user = TestUser.objects.create(username='john')
+        # self.test_user = TestUser.objects.create(username='john')
+
     def test_update_user(self):
-        # we need a user
-        user = User.objects.create(username='john')
-
-        backend = Saml2Backend()
-
         attribute_mapping = {
             'uid': ('username', ),
             'mail': ('email', ),
@@ -103,20 +104,17 @@ class Saml2BackendTests(TestCase):
             'cn': ('John', ),
             'sn': ('Doe', ),
             }
-        backend._update_user(user, attributes, attribute_mapping)
-        self.assertEqual(user.email, 'john@example.com')
-        self.assertEqual(user.first_name, 'John')
-        self.assertEqual(user.last_name, 'Doe')
+        self.backend._update_user(self.user, attributes, attribute_mapping)
+        self.assertEqual(self.user.email, 'john@example.com')
+        self.assertEqual(self.user.first_name, 'John')
+        self.assertEqual(self.user.last_name, 'Doe')
 
         attribute_mapping['saml_age'] = ('age', )
         attributes['saml_age'] = ('22', )
-        backend._update_user(user, attributes, attribute_mapping)
-        self.assertEqual(user.age, '22')
+        self.backend._update_user(self.user, attributes, attribute_mapping)
+        self.assertEqual(self.user.age, '22')
 
     def test_update_user_callable_attributes(self):
-        user = User.objects.create(username='john')
-
-        backend = Saml2Backend()
         attribute_mapping = {
             'uid': ('username', ),
             'mail': ('email', ),
@@ -129,15 +127,15 @@ class Saml2BackendTests(TestCase):
             'cn': ('John', ),
             'sn': ('Doe', ),
             }
-        backend._update_user(user, attributes, attribute_mapping)
-        self.assertEqual(user.email, 'john@example.com')
-        self.assertEqual(user.first_name, 'John')
-        self.assertEqual(user.last_name, 'Doe')
+        self.backend._update_user(self.user, attributes, attribute_mapping)
+        self.assertEqual(self.user.email, 'john@example.com')
+        self.assertEqual(self.user.first_name, 'John')
+        self.assertEqual(self.user.last_name, 'Doe')
 
     def test_update_user_empty_attribute(self):
-        user = User.objects.create(username='john', last_name='Smith')
+        self.user.last_name = 'Smith'
+        self.user.save()
 
-        backend = Saml2Backend()
         attribute_mapping = {
             'uid': ('username', ),
             'mail': ('email', ),
@@ -151,20 +149,17 @@ class Saml2BackendTests(TestCase):
             'sn': (),
             }
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
-            backend._update_user(user, attributes, attribute_mapping)
-        self.assertEqual(user.email, 'john@example.com')
-        self.assertEqual(user.first_name, 'John')
+            self.backend._update_user(self.user, attributes, attribute_mapping)
+        self.assertEqual(self.user.email, 'john@example.com')
+        self.assertEqual(self.user.first_name, 'John')
         # empty attribute list: no update
-        self.assertEqual(user.last_name, 'Smith')
+        self.assertEqual(self.user.last_name, 'Smith')
         self.assertIn(
-            'DEBUG:djangosaml2:Could not find value for "sn", not '
-            'updating fields "(\'last_name\',)"',
+            'DEBUG:djangosaml2:Could not find value for "sn", not updating fields "(\'last_name\',)"',
             logs.output,
         )
 
     def test_invalid_model_attribute_log(self):
-        backend = Saml2Backend()
-
         attribute_mapping = {
             'uid': ['username'],
             'cn': ['nonexistent'],
@@ -175,8 +170,8 @@ class Saml2BackendTests(TestCase):
         }
 
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
-            user, _ = backend.get_or_create_user(get_django_user_lookup_attribute(get_saml_user_model()), 'john', True)
-            backend._update_user(user, attributes, attribute_mapping)
+            user, _ = self.backend.get_or_create_user(get_django_user_lookup_attribute(get_saml_user_model()), 'john', True)
+            self.backend._update_user(user, attributes, attribute_mapping)
 
         self.assertIn(
             'DEBUG:djangosaml2:Could not find attribute "nonexistent" on user "john"',
@@ -184,8 +179,6 @@ class Saml2BackendTests(TestCase):
         )
 
     def test_django_user_main_attribute(self):
-        backend = Saml2Backend()
-
         old_username_field = User.USERNAME_FIELD
         User.USERNAME_FIELD = 'slug'
         self.assertEqual(get_django_user_lookup_attribute(get_saml_user_model()), 'slug')
@@ -206,74 +199,63 @@ class Saml2BackendTests(TestCase):
             self.assertEqual(get_django_user_lookup_attribute(get_saml_user_model()), 'foo')
 
     def test_get_or_create_user_existing(self):
-        backend = Saml2Backend()
-
-        TestUser.objects.create(username='john')
-
         with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-            john, created = backend.get_or_create_user(
+            user, created = self.backend.get_or_create_user(
                 get_django_user_lookup_attribute(get_saml_user_model()),
                 'john',
                 False,
             )
 
-        self.assertTrue(isinstance(john, TestUser))
+        self.assertTrue(isinstance(user, TestUser))
         self.assertFalse(created)
 
     def test_get_or_create_user_duplicates(self):
-        backend = Saml2Backend()
-
-        TestUser.objects.create(username='john', age=1)
-        TestUser.objects.create(username='paul', age=1)
+        TestUser.objects.create(username='paul')
 
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
             with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-                john, created = backend.get_or_create_user(
+                user, created = self.backend.get_or_create_user(
                     'age',
-                    1,
+                    '',
                     False,
                 )
 
-        self.assertTrue(john is None)
+        self.assertTrue(user is None)
         self.assertFalse(created)
         self.assertIn(
-            "ERROR:djangosaml2:Multiple users match, model: testprofiles.testuser, lookup: {'age': 1}",
+            "ERROR:djangosaml2:Multiple users match, model: testprofiles.testuser, lookup: {'age': ''}",
             logs.output,
         )
 
     def test_get_or_create_user_no_create(self):
-        backend = Saml2Backend()
-
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
             with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-                john, created = backend.get_or_create_user(
+                user, created = self.backend.get_or_create_user(
                     get_django_user_lookup_attribute(get_saml_user_model()),
-                    'john',
+                    'paul',
                     False,
                 )
 
-        self.assertTrue(john is None)
+        self.assertTrue(user is None)
         self.assertFalse(created)
         self.assertIn(
-            "ERROR:djangosaml2:The user does not exist, model: testprofiles.testuser, lookup: {'username': 'john'}",
+            "ERROR:djangosaml2:The user does not exist, model: testprofiles.testuser, lookup: {'username': 'paul'}",
             logs.output,
         )
 
     def test_get_or_create_user_create(self):
-        backend = Saml2Backend()
-
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
             with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-                john, created = backend.get_or_create_user(
+                user, created = self.backend.get_or_create_user(
                     get_django_user_lookup_attribute(get_saml_user_model()),
-                    'john',
+                    'paul',
                     True,
                 )
 
-        self.assertTrue(isinstance(john, TestUser))
+        self.assertTrue(isinstance(user, TestUser))
         self.assertTrue(created)
         self.assertIn(
-            f"DEBUG:djangosaml2:New user created: {john}",
+            f"DEBUG:djangosaml2:New user created: {user}",
             logs.output,
         )
 
