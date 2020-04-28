@@ -84,12 +84,24 @@ class BackendUtilMethodsTests(TestCase):
         self.assertEqual(u.custom_attribute, 'new_value')
 
 
-class DefaultSaml2BackendTests(TestCase):
+class Saml2BackendTests(TestCase):
+    """ UnitTests on backend classes
+    """
+    backend_cls = Saml2Backend
 
     def setUp(self):
-        self.backend = Saml2Backend()
+        self.backend = self.backend_cls()
         self.user = TestUser.objects.create(username='john')
-        # self.test_user = TestUser.objects.create(username='john')
+
+    def test_is_authorized(self):
+        self.assertTrue(self.backend.is_authorized({}, {}))
+
+    def test_clean_attributes(self):
+        attributes = {'random': 'dummy', 'value': 123}
+        self.assertEqual(self.backend.clean_attributes(attributes), attributes)
+        
+    def test_clean_user_main_attribute(self):
+        self.assertEqual(self.backend.clean_user_main_attribute('value'), 'value')
 
     def test_update_user(self):
         attribute_mapping = {
@@ -258,6 +270,56 @@ class DefaultSaml2BackendTests(TestCase):
             f"DEBUG:djangosaml2:New user created: {user}",
             logs.output,
         )
+
+
+class CustomizedBackend(Saml2Backend):
+    """ Override the available methods with some customized implementation to test customization
+    """
+    def is_authorized(self, attributes, attribute_mapping):
+        ''' Allow only staff users from the IDP '''
+        return attributes.get('is_staff', (None, ))[0] == 'true'
+    
+    def clean_attributes(self, attributes: dict):
+        ''' Keep only age attribute '''
+        return {
+            'age': attributes.get('age', ()),
+        }
+
+    def clean_user_main_attribute(self, main_attribute):
+        ''' Replace all spaces an dashes by underscores '''
+        return main_attribute.replace('-', '_').replace(' ', '_')
+
+    def get_or_create_user(self, user_lookup_key, user_lookup_value, create_unknown_user, **kwargs):
+        return super().get_or_create_user(user_lookup_key, user_lookup_value, create_unknown_user, **kwargs)
+
+
+class CustomizedSaml2BackendTests(Saml2BackendTests):
+    backend_cls = CustomizedBackend
+
+    def test_is_authorized(self):
+        attribute_mapping = {
+            'uid': ('username', ),
+            'mail': ('email', ),
+            'cn': ('first_name', ),
+            'sn': ('last_name', ),
+            }
+        attributes = {
+            'uid': ('john', ),
+            'mail': ('john@example.com', ),
+            'cn': ('John', ),
+            'sn': ('Doe', ),
+            }
+        self.assertFalse(self.backend.is_authorized(attributes, attribute_mapping))
+        attributes['is_staff'] = ('true', )
+        self.assertTrue(self.backend.is_authorized(attributes, attribute_mapping))
+
+    def test_clean_attributes(self):
+        attributes = {'random': 'dummy', 'value': 123, 'age': '28'}
+        self.assertEqual(self.backend.clean_attributes(attributes), {'age': '28'})
+        
+    def test_clean_user_main_attribute(self):
+        self.assertEqual(self.backend.clean_user_main_attribute('va--l__ u -e'), 'va__l___u__e')
+
 
 
 class LowerCaseSaml2Backend(Saml2Backend):
