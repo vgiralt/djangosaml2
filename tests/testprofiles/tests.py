@@ -19,23 +19,69 @@ import sys
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import User as DjangoUserModel
 from django.test import TestCase, override_settings
-from .models import TestUser
-from djangosaml2.backends import (Saml2Backend,
-                                  get_django_user_lookup_attribute,
+from django.core.exceptions import ImproperlyConfigured
+from djangosaml2.backends import (Saml2Backend, get_model, get_saml_user_model, set_attribute,
+                                  get_django_user_lookup_attribute, get_django_user_lookup_attribute,
                                   get_saml_user_model)
+
+from .models import TestUser
 
 User = get_user_model()
 
-if sys.version_info < (3, 4):
-    # Monkey-patch TestCase to add the assertLogs method introduced in
-    # Python 3.4
-    from unittest2.case import _AssertLogsContext
 
-    class LoggerTestCase(TestCase):
-        def assertLogs(self, logger=None, level=None):
-            return _AssertLogsContext(self, logger, level)
+class BackendUtilsTests(TestCase):
+    def test_get_model_ok(self):
+        user_model = get_model('testprofiles.TestUser')
+        self.assertEqual(user_model, TestUser)
 
-    TestCase = LoggerTestCase
+    def test_get_model_nonexisting(self):
+        nonexisting_model = 'testprofiles.NonExisting'
+
+        with self.assertRaisesMessage(ImproperlyConfigured, f"SAML_USER_MODEL refers to model '{nonexisting_model}' that has not been installed"):
+            get_model(nonexisting_model)
+
+    def test_get_model_invalid_specifier(self):
+        nonexisting_model = 'random_package.specifier.testprofiles.NonExisting'
+
+        with self.assertRaisesMessage(ImproperlyConfigured, "SAML_USER_MODEL must be of the form 'app_label.model_name'"):
+            get_model(nonexisting_model)
+
+    def test_get_saml_user_model_specified(self):
+        with override_settings(AUTH_USER_MODEL='auth.User'):
+            with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+                self.assertEqual(get_saml_user_model(), TestUser)
+
+    def test_get_saml_user_model_default(self):
+        with override_settings(AUTH_USER_MODEL='auth.User'):
+            self.assertEqual(get_saml_user_model(), DjangoUserModel)
+
+    def test_get_django_user_lookup_attribute_specified(self):
+        with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+            with override_settings(SAML_DJANGO_USER_MAIN_ATTRIBUTE='age'):
+                self.assertEqual(get_django_user_lookup_attribute(TestUser), 'age')
+
+    def test_get_django_user_lookup_attribute_default(self):
+        with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+            self.assertEqual(get_django_user_lookup_attribute(TestUser), 'username')
+
+    def test_set_attribute(self):
+        u = TestUser()
+        self.assertFalse(hasattr(u, 'custom_attribute'))
+
+        # Set attribute initially
+        changed = set_attribute(u, 'custom_attribute', 'value')
+        self.assertTrue(changed)
+        self.assertEqual(u.custom_attribute, 'value')
+
+        # 'Update' to the same value again
+        changed_same = set_attribute(u, 'custom_attribute', 'value')
+        self.assertFalse(changed_same)
+        self.assertEqual(u.custom_attribute, 'value')
+
+        # Update to a different value
+        changed_different = set_attribute(u, 'custom_attribute', 'new_value')
+        self.assertTrue(changed_different)
+        self.assertEqual(u.custom_attribute, 'new_value')
 
 
 class Saml2BackendTests(TestCase):

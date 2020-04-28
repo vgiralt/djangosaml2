@@ -27,7 +27,7 @@ from .signals import pre_user_save
 logger = logging.getLogger('djangosaml2')
 
 
-def get_model(model_path):
+def get_model(model_path: str):
     from django.apps import apps
     try:
         return apps.get_model(model_path)
@@ -52,15 +52,19 @@ def get_django_user_lookup_attribute(userModel) -> str:
     return getattr(userModel, 'USERNAME_FIELD', 'username')
 
 
-def set_attribute(obj, attr, new_value) -> bool:
+def set_attribute(obj: Any, attr: str, new_value: Any) -> bool:
     """ Set an attribute of an object to a specific value, if it wasn't that already.
         Return True if the attribute was changed and False otherwise.
     """
 
-    old_value = getattr(obj, attr)
-    if new_value != old_value:
+    if not hasattr(obj, attr):
         setattr(obj, attr, new_value)
         return True
+    else:
+        old_value = getattr(obj, attr)
+        if new_value != old_value:
+            setattr(obj, attr, new_value)
+            return True
 
     return False
 
