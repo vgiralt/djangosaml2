@@ -19,6 +19,7 @@ import sys
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import User as DjangoUserModel
 from django.test import TestCase, override_settings
+from .models import TestUser
 from djangosaml2.backends import (Saml2Backend,
                                   get_django_user_lookup_attribute,
                                   get_saml_user_model)
@@ -158,17 +159,77 @@ class Saml2BackendTests(TestCase):
         with override_settings(SAML_DJANGO_USER_MAIN_ATTRIBUTE='foo'):
             self.assertEqual(get_django_user_lookup_attribute(get_saml_user_model()), 'foo')
 
-    def test_django_user_main_attribute_lookup(self):
+    def test_get_or_create_user_existing(self):
         backend = Saml2Backend()
 
-        # self.assertEqual(backend.get_django_user_main_attribute_lookup(), '')
+        TestUser.objects.create(username='john')
 
-        # TODO: test with acual user so he can be matched
-        # with override_settings(
-        #         SAML_DJANGO_USER_MAIN_ATTRIBUTE_LOOKUP='__iexact'):
-        #     self.assertEqual(
-        #         backend.get_django_user_main_attribute_lookup(),
-        #         '__iexact')
+        with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+            john, created = backend.get_or_create_user(
+                get_django_user_lookup_attribute(get_saml_user_model()),
+                'john',
+                False,
+            )
+
+        self.assertTrue(isinstance(john, TestUser))
+        self.assertFalse(created)
+
+    def test_get_or_create_user_duplicates(self):
+        backend = Saml2Backend()
+
+        TestUser.objects.create(username='john', age=1)
+        TestUser.objects.create(username='paul', age=1)
+
+        with self.assertLogs('djangosaml2', level='DEBUG') as logs:
+            with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+                john, created = backend.get_or_create_user(
+                    'age',
+                    1,
+                    False,
+                )
+
+        self.assertTrue(john is None)
+        self.assertFalse(created)
+        self.assertIn(
+            "ERROR:djangosaml2:Multiple users match, model: testprofiles.testuser, lookup: {'age': 1}",
+            logs.output,
+        )
+
+    def test_get_or_create_user_no_create(self):
+        backend = Saml2Backend()
+
+        with self.assertLogs('djangosaml2', level='DEBUG') as logs:
+            with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+                john, created = backend.get_or_create_user(
+                    get_django_user_lookup_attribute(get_saml_user_model()),
+                    'john',
+                    False,
+                )
+
+        self.assertTrue(john is None)
+        self.assertFalse(created)
+        self.assertIn(
+            "ERROR:djangosaml2:The user does not exist, model: testprofiles.testuser, lookup: {'username': 'john'}",
+            logs.output,
+        )
+
+    def test_get_or_create_user_create(self):
+        backend = Saml2Backend()
+
+        with self.assertLogs('djangosaml2', level='DEBUG') as logs:
+            with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+                john, created = backend.get_or_create_user(
+                    get_django_user_lookup_attribute(get_saml_user_model()),
+                    'john',
+                    True,
+                )
+
+        self.assertTrue(isinstance(john, TestUser))
+        self.assertTrue(created)
+        self.assertIn(
+            f"DEBUG:djangosaml2:New user created: {john}",
+            logs.output,
+        )
 
 
 class LowerCaseSaml2Backend(Saml2Backend):

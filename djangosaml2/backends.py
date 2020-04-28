@@ -45,6 +45,8 @@ def get_saml_user_model():
 
 
 def get_django_user_lookup_attribute(userModel) -> str:
+    """ Returns the attribute on which to match the identifier with for the user lookup
+    """
     if hasattr(settings, 'SAML_DJANGO_USER_MAIN_ATTRIBUTE'):
         return settings.SAML_DJANGO_USER_MAIN_ATTRIBUTE
     return getattr(userModel, 'USERNAME_FIELD', 'username')
@@ -128,10 +130,8 @@ class Saml2Backend(ModelBackend):
         try:
             user = UserModel.objects.get(**user_query_args)
         except MultipleObjectsReturned:
-            logger.error("Multiple users match, lookup: %s", user_query_args)
+            logger.error("Multiple users match, model: %s, lookup: %s", str(UserModel._meta), user_query_args)
         except UserModel.DoesNotExist:
-            logger.error('The user does not exist, lookup: %s', user_query_args)
-
             # Create new one if desired by settings
             if create_unknown_user:
                 try:
@@ -141,6 +141,8 @@ class Saml2Backend(ModelBackend):
 
                 if created:
                     logger.debug('New user created: %s', user)
+            else:
+                logger.error('The user does not exist, model: %s, lookup: %s', str(UserModel._meta), user_query_args)
 
         return user, created
 
