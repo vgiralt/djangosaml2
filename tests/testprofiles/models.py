@@ -30,3 +30,13 @@ class StandaloneUserModel(models.Model):
     USERNAME_FIELD.
     """
     username = models.CharField(max_length=30, unique=True)
+
+
+class RequiredFieldUser(models.Model):
+    email = models.EmailField(unique=True)
+    email_verified = models.BooleanField()
+
+    USERNAME_FIELD = 'email'
+
+    def set_unusable_password(self):
+        pass

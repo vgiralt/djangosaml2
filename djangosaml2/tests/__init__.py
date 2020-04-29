@@ -18,6 +18,7 @@ import base64
 import datetime
 import re
 import sys
+
 from unittest import skip
 
 from django.conf import settings
@@ -518,6 +519,43 @@ ID4zT0FcZASGuthM56rRJJSx
         ])
 
         self.assertEqual(rendered, expected)
+
+    def test_sigalg_not_passed_when_not_signing_request(self):
+        # monkey patch SAML configuration
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_one_idp.xml',
+        )
+
+        with mock.patch(
+            'djangosaml2.views.Saml2Client.prepare_for_authenticate',
+            return_value=('session_id', {'url': 'fake'}),
+
+        ) as prepare_for_auth_mock:
+            self.client.get(reverse('saml2_login'))
+        prepare_for_auth_mock.assert_called_once()
+        _args, kwargs = prepare_for_auth_mock.call_args
+        self.assertNotIn('sigalg', kwargs)
+
+    def test_sigalg_passed_when_signing_request(self):
+        # monkey patch SAML configuration
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_one_idp.xml',
+        )
+
+        settings.SAML_CONFIG['service']['sp']['authn_requests_signed'] = True
+        with mock.patch(
+            'djangosaml2.views.Saml2Client.prepare_for_authenticate',
+            return_value=('session_id', {'url': 'fake'}),
+
+        ) as prepare_for_auth_mock:
+            self.client.get(reverse('saml2_login'))
+        prepare_for_auth_mock.assert_called_once()
+        _args, kwargs = prepare_for_auth_mock.call_args
+        self.assertIn('sigalg', kwargs)
 
 
 def test_config_loader(request):
