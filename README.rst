@@ -192,7 +192,13 @@ We will see a typical configuration for protecting a Django project::
                      saml2.BINDING_HTTP_POST),
                     ],
                 },
-
+             # Mandates that the identity provider MUST authenticate the
+             # presenter directly rather than rely on a previous security context.
+            'force_authn': False, 
+            
+             # Enable AllowCreate in NameIDPolicy.
+            'name_id_format_allow_create': False,
+            
              # attributes that this project need to identify a user
             'required_attributes': ['uid'],
 
@@ -307,6 +313,24 @@ a saml2.config.SPConfig object. In order to do so you set the following
 setting::
 
   SAML_CONFIG_LOADER = 'python.path.to.your.callable'
+
+
+Custom error handler
+....................
+
+When an error occurs during the authentication flow, djangosaml2 will render
+a simple error page with an error message and status code. You can customize
+this behaviour by specifying the path to your own error handler in the settings:
+
+  SAML_ACS_FAILURE_RESPONSE_FUNCTION = 'python.path.to.your.view'
+
+This should be a view which takes a request, optional exception which occured
+and status code, and returns a response to serve the user. E.g. The default
+implementation looks like this::
+
+  def template_failure(request, exception=None, **kwargs):
+      """ Renders a simple template with an error message. """
+      return render(request, 'djangosaml2/login_error.html', {'exception': exception}, status=kwargs.get('status', 403))
 
 
 User attributes

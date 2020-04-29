@@ -19,44 +19,42 @@ import logging
 from django.conf import settings
 from django.contrib import auth
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied, SuspiciousOperation
+from django.http import HttpResponseBadRequest  # 40x
+from django.http import HttpResponseRedirect  # 30x
+from django.http import HttpResponseServerError  # 50x
+from django.http import Http404, HttpResponse
+from django.shortcuts import render
+from django.template import TemplateDoesNotExist
+from django.utils.http import is_safe_url
+from django.views.decorators.csrf import csrf_exempt
+from saml2 import BINDING_HTTP_REDIRECT, BINDING_HTTP_POST
+from saml2.client_base import LogoutError
+from saml2.metadata import entity_descriptor
+from saml2.ident import code, decode
+from saml2.metadata import entity_descriptor
+from saml2.response import (SignatureError, StatusAuthnFailed, StatusError,
+                            StatusNoAuthnContext, StatusRequestDenied,
+                            UnsolicitedResponse)
+from saml2.s_utils import UnsupportedBinding
+from saml2.sigver import MissingKey
+from saml2.validate import ResponseLifetimeExceed, ToEarly
+from saml2.xmldsig import (  # support for SHA1 is required by spec
+    SIG_RSA_SHA1, SIG_RSA_SHA256)
+
+from .cache import IdentityCache, OutstandingQueriesCache, StateCache
+from .conf import get_config
+from .exceptions import IdPConfigurationMissing
+from .overrides import Saml2Client
+from .signals import post_authenticated
+from .utils import (available_idps, fail_acs_response, get_custom_setting,
+                    get_idp_sso_supported_bindings, get_location)
+
 try:
     from django.contrib.auth.views import LogoutView
     django_logout = LogoutView.as_view()
 except ImportError:
     from django.contrib.auth.views import logout as django_logout
-from django.core.exceptions import PermissionDenied, SuspiciousOperation
-from django.http import Http404, HttpResponse
-from django.http import HttpResponseRedirect  # 30x
-from django.http import HttpResponseBadRequest  # 40x
-from django.http import HttpResponseServerError  # 50x
-from django.views.decorators.http import require_POST
-from django.shortcuts import render
-from django.template import TemplateDoesNotExist
-from django.utils.six import text_type, binary_type, PY3
-from django.views.decorators.csrf import csrf_exempt
-
-from saml2 import BINDING_HTTP_REDIRECT, BINDING_HTTP_POST
-from saml2.client_base import LogoutError
-from saml2.metadata import entity_descriptor
-from saml2.ident import code, decode
-from saml2.sigver import MissingKey
-from saml2.s_utils import UnsupportedBinding
-from saml2.response import (
-    StatusError, StatusAuthnFailed, SignatureError, StatusRequestDenied,
-    UnsolicitedResponse, StatusNoAuthnContext,
-)
-from saml2.validate import ResponseLifetimeExceed, ToEarly
-from saml2.xmldsig import SIG_RSA_SHA1, SIG_RSA_SHA256  # support for SHA1 is required by spec
-
-from djangosaml2.cache import IdentityCache, OutstandingQueriesCache
-from djangosaml2.cache import StateCache
-from djangosaml2.conf import get_config
-from djangosaml2.overrides import Saml2Client
-from djangosaml2.signals import post_authenticated
-from djangosaml2.utils import (
-    available_idps, fail_acs_response, get_custom_setting,
-    get_idp_sso_supported_bindings, get_location, is_safe_url_compat,
-)
 
 
 logger = logging.getLogger('djangosaml2')
@@ -71,16 +69,6 @@ def _get_subject_id(session):
         return decode(session['_saml2_subject_id'])
     except KeyError:
         return None
-
-
-def callable_bool(value):
-    """ A compatibility wrapper for pre Django 1.10 User model API that used
-    is_authenticated() and is_anonymous() methods instead of attributes
-    """
-    if callable(value):
-        return value()
-    else:
-        return value
 
 
 def login(request,
@@ -111,7 +99,7 @@ def login(request,
         came_from = settings.LOGIN_REDIRECT_URL
 
     # Ensure the user-originating redirection url is safe.
-    if not is_safe_url_compat(url=came_from, allowed_hosts={request.get_host()}):
+    if not is_safe_url(url=came_from, allowed_hosts={request.get_host()}):
         came_from = settings.LOGIN_REDIRECT_URL
 
     # if the user is already authenticated that maybe because of two reasons:
@@ -124,7 +112,7 @@ def login(request,
     # SAML_IGNORE_AUTHENTICATED_USERS_ON_LOGIN setting. If that setting
     # is True (default value) we will redirect him to the came_from view.
     # Otherwise, we will show an (configurable) authorization error.
-    if callable_bool(request.user.is_authenticated):
+    if request.user.is_authenticated:
         redirect_authenticated_user = getattr(settings, 'SAML_IGNORE_AUTHENTICATED_USERS_ON_LOGIN', True)
         if redirect_authenticated_user:
             return HttpResponseRedirect(came_from)
@@ -137,6 +125,13 @@ def login(request,
     selected_idp = request.GET.get('idp', None)
     conf = get_config(config_loader_path, request)
 
+    kwargs = {}
+    # pysaml needs a string otherwise: "cannot serialize True (type bool)"
+    if getattr(conf, '_sp_force_authn', False):
+        kwargs['force_authn'] = "true"
+    if getattr(conf, '_sp_allow_create', False):
+        kwargs['allow_create'] = "true"
+
     # is a embedded wayf needed?
     idps = available_idps(conf)
     if selected_idp is None and len(idps) > 1:
@@ -145,7 +140,14 @@ def login(request,
                 'available_idps': idps.items(),
                 'came_from': came_from,
                 })
-
+    else:
+        # is the first one, otherwise next logger message will print None
+        if not idps:
+            raise IdPConfigurationMissing(('IdP configuration is missing or '
+                                           'its metadata is expired.'))
+        if selected_idp is None:
+            selected_idp = list(idps.keys())[0]
+    
     # choose a binding to try first
     sign_requests = getattr(conf, '_sp_authn_requests_signed', False)
     binding = BINDING_HTTP_POST if sign_requests else BINDING_HTTP_REDIRECT
@@ -185,10 +187,10 @@ def login(request,
             session_id, result = client.prepare_for_authenticate(
                 entityid=selected_idp, relay_state=came_from,
                 binding=binding, sign=False, sigalg=sigalg,
-                nsprefix=nsprefix)
+                nsprefix=nsprefix, **kwargs)
         except TypeError as e:
             logger.error('Unable to know which IdP to use')
-            return HttpResponse(text_type(e))
+            return HttpResponse(str(e))
         else:
             http_response = HttpResponseRedirect(get_location(result))
     elif binding == BINDING_HTTP_POST:
@@ -198,15 +200,13 @@ def login(request,
                 location = client.sso_location(selected_idp, binding)
             except TypeError as e:
                 logger.error('Unable to know which IdP to use')
-                return HttpResponse(text_type(e))
+                return HttpResponse(str(e))
             session_id, request_xml = client.create_authn_request(
                 location,
-                binding=binding)
+                binding=binding,
+                **kwargs)
             try:
-                if PY3:
-                    saml_request = base64.b64encode(binary_type(request_xml, 'UTF-8'))
-                else:
-                    saml_request = base64.b64encode(binary_type(request_xml))
+                saml_request = base64.b64encode(bytes(request_xml, 'UTF-8')).decode('utf-8')
 
                 http_response = render(request, post_binding_form_template, {
                     'target_url': location,
@@ -226,7 +226,7 @@ def login(request,
                     binding=binding)
             except TypeError as e:
                 logger.error('Unable to know which IdP to use')
-                return HttpResponse(text_type(e))
+                return HttpResponse(str(e))
             else:
                 http_response = HttpResponse(result['data'])
     else:
@@ -270,34 +270,34 @@ def assertion_consumer_service(request,
 
     try:
         response = client.parse_authn_request_response(xmlstr, BINDING_HTTP_POST, outstanding_queries)
-    except (StatusError, ToEarly):
+    except (StatusError, ToEarly) as e:
         logger.exception("Error processing SAML Assertion.")
-        return fail_acs_response(request)
-    except ResponseLifetimeExceed:
+        return fail_acs_response(request, exception=e)
+    except ResponseLifetimeExceed as e:
         logger.info("SAML Assertion is no longer valid. Possibly caused by network delay or replay attack.", exc_info=True)
-        return fail_acs_response(request)
-    except SignatureError:
+        return fail_acs_response(request, exception=e)
+    except SignatureError as e:
         logger.info("Invalid or malformed SAML Assertion.", exc_info=True)
-        return fail_acs_response(request)
-    except StatusAuthnFailed:
+        return fail_acs_response(request, exception=e)
+    except StatusAuthnFailed as e:
         logger.info("Authentication denied for user by IdP.", exc_info=True)
-        return fail_acs_response(request)
-    except StatusRequestDenied:
+        return fail_acs_response(request, exception=e)
+    except StatusRequestDenied as e:
         logger.warning("Authentication interrupted at IdP.", exc_info=True)
-        return fail_acs_response(request)
-    except StatusNoAuthnContext:
+        return fail_acs_response(request, exception=e)
+    except StatusNoAuthnContext as e:
         logger.warning("Missing Authentication Context from IdP.", exc_info=True)
-        return fail_acs_response(request)
-    except MissingKey:
+        return fail_acs_response(request, exception=e)
+    except MissingKey as e:
         logger.exception("SAML Identity Provider is not configured correctly: certificate key is missing!")
-        return fail_acs_response(request)
-    except UnsolicitedResponse:
+        return fail_acs_response(request, exception=e)
+    except UnsolicitedResponse as e:
         logger.exception("Received SAMLResponse when no request has been made.")
-        return fail_acs_response(request)
+        return fail_acs_response(request, exception=e)
 
     if response is None:
         logger.warning("Invalid SAML Assertion received (unknown error).")
-        return fail_acs_response(request, status=400, exc_class=SuspiciousOperation)
+        return fail_acs_response(request, status=400, exception=SuspiciousOperation('Unknown SAML2 error'))
 
     session_id = response.session_id()
     oq_cache.delete(session_id)
@@ -317,7 +317,7 @@ def assertion_consumer_service(request,
                              create_unknown_user=create_unknown_user)
     if user is None:
         logger.warning("Could not authenticate user received in SAML Assertion. Session info: %s", session_info)
-        raise PermissionDenied
+        return fail_acs_response(request, exception=PermissionDenied('No user could be authenticated.'))
 
     auth.login(request, user)
     _set_subject_id(request.session, session_info['name_id'])
@@ -333,7 +333,7 @@ def assertion_consumer_service(request,
     if not relay_state:
         logger.warning('The RelayState parameter exists but is empty')
         relay_state = default_relay_state
-    if not is_safe_url_compat(url=relay_state, allowed_hosts={request.get_host()}):
+    if not is_safe_url(url=relay_state, allowed_hosts={request.get_host()}):
         relay_state = settings.LOGIN_REDIRECT_URL
     logger.debug('Redirecting to the RelayState: %s', relay_state)
     return HttpResponseRedirect(relay_state)
@@ -465,7 +465,17 @@ def do_logout_service(request, data, binding, config_loader_path=None, next_page
                 relay_state=data.get('RelayState', ''))
             state.sync()
             auth.logout(request)
-            return HttpResponseRedirect(get_location(http_info))
+            if (
+                http_info.get('method', 'GET') == 'POST' and
+                'data' in http_info and
+                ('Content-type', 'text/html') in http_info.get('headers', [])
+            ):
+                # need to send back to the IDP a signed POST response with user session
+                # return HTML form content to browser with auto form validation
+                # to finally send request to the IDP
+                return HttpResponse(http_info['data'])
+            else:
+                return HttpResponseRedirect(get_location(http_info))
     else:
         logger.error('No SAMLResponse or SAMLRequest parameter found')
         raise Http404('No SAMLResponse or SAMLRequest parameter found')
@@ -489,7 +499,7 @@ def metadata(request, config_loader_path=None, valid_for=None):
     """
     conf = get_config(config_loader_path, request)
     metadata = entity_descriptor(conf)
-    return HttpResponse(content=text_type(metadata).encode('utf-8'),
+    return HttpResponse(content=str(metadata).encode('utf-8'),
                         content_type="text/xml; charset=utf8")
 
 
