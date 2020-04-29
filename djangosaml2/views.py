@@ -29,13 +29,20 @@ from django.template import TemplateDoesNotExist
 from django.utils.http import is_safe_url
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from saml2 import BINDING_HTTP_POST, BINDING_HTTP_REDIRECT
+from saml2 import BINDING_HTTP_REDIRECT, BINDING_HTTP_POST
+from saml2.client_base import LogoutError
+from saml2.metadata import entity_descriptor
 from saml2.ident import code, decode
 from saml2.metadata import entity_descriptor
 from saml2.response import (SignatureError, StatusAuthnFailed, StatusError,
                             StatusNoAuthnContext, StatusRequestDenied,
                             UnsolicitedResponse)
 from saml2.s_utils import UnsupportedBinding
+from saml2.response import (
+    StatusError, StatusAuthnFailed, SignatureError, StatusRequestDenied,
+    UnsolicitedResponse, StatusNoAuthnContext,
+)
+from saml2.mdstore import SourceNotFound
 from saml2.sigver import MissingKey
 from saml2.validate import ResponseLifetimeExceed, ToEarly
 from saml2.xmldsig import (  # support for SHA1 is required by spec
@@ -122,7 +129,15 @@ def login(request,
                     })
 
     selected_idp = request.GET.get('idp', None)
-    conf = get_config(config_loader_path, request)
+    try:
+        conf = get_config(config_loader_path, request)
+    except SourceNotFound as excp:
+        msg = ('Error, IdP EntityID was not found '
+               'in metadata: {}')
+        logger.exception(msg.format(excp))
+        return HttpResponse(msg.format(('Please contact '
+                                        'technical support.')),
+                            status=500)
 
     kwargs = {}
     # pysaml needs a string otherwise: "cannot serialize True (type bool)"
@@ -176,17 +191,18 @@ def login(request,
     logger.debug('Redirecting user to the IdP via %s binding.', binding)
     if binding == BINDING_HTTP_REDIRECT:
         try:
-            # do not sign the xml itself, instead use the sigalg to
-            # generate the signature as a URL param
-            sig_alg_option_map = {'sha1': SIG_RSA_SHA1,
-                                  'sha256': SIG_RSA_SHA256}
-            sig_alg_option = getattr(conf, '_sp_authn_requests_signed_alg', 'sha1')
-            sigalg = sig_alg_option_map[sig_alg_option] if sign_requests else None
             nsprefix = get_namespace_prefixes()
+            if sign_requests:
+                # do not sign the xml itself, instead use the sigalg to
+                # generate the signature as a URL param
+                sig_alg_option_map = {'sha1': SIG_RSA_SHA1,
+                                      'sha256': SIG_RSA_SHA256}
+                sig_alg_option = getattr(conf, '_sp_authn_requests_signed_alg', 'sha1')
+                kwargs["sigalg"] = sig_alg_option_map[sig_alg_option]
             session_id, result = client.prepare_for_authenticate(
                 entityid=selected_idp, relay_state=came_from,
-                binding=binding, sign=False, sigalg=sigalg,
-                nsprefix=nsprefix, **kwargs)
+                binding=binding, sign=False, nsprefix=nsprefix,
+                **kwargs)
         except TypeError as e:
             logger.error('Unable to know which IdP to use')
             return HttpResponse(str(e))
@@ -376,7 +392,13 @@ def logout(request, config_loader_path=None):
             'The session does not contain the subject id for user %s',
             request.user)
 
-    result = client.global_logout(subject_id)
+    try:
+        result = client.global_logout(subject_id)
+    except LogoutError as exp:
+        logger.exception('Error Handled - SLO not supported by IDP: {}'.format(exp))
+        auth.logout(request)
+        state.sync()
+        return HttpResponseRedirect('/')
 
     state.sync()
 

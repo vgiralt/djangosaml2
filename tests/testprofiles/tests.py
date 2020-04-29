@@ -190,6 +190,26 @@ class Saml2BackendTests(TestCase):
             logs.output,
         )
 
+    @override_settings(AUTH_USER_MODEL='testprofiles.RequiredFieldUser')
+    def test_create_user_with_required_fields(self):
+        backend = Saml2Backend()
+        attribute_mapping = {
+            'mail': ['email'],
+            'mail_verified': ['email_verified']
+        }
+        attributes = {
+            'mail': ['john@example.org'],
+            'mail_verified': [True],
+        }
+        # User creation does not fail if several fields are required.
+        user = backend._get_or_create_saml2_user(
+            'john@example.org',
+            attributes,
+            attribute_mapping,
+        )
+        self.assertEquals(user.email, 'john@example.org')
+        self.assertIs(user.email_verified, True)
+
     def test_django_user_main_attribute(self):
         old_username_field = User.USERNAME_FIELD
         User.USERNAME_FIELD = 'slug'

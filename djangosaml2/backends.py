@@ -138,11 +138,8 @@ class Saml2Backend(ModelBackend):
         except UserModel.DoesNotExist:
             # Create new one if desired by settings
             if create_unknown_user:
-                try:
-                    user, created = UserModel.objects.get_or_create(**user_query_args, defaults={user_lookup_key: user_lookup_value})
-                except Exception as e:
-                    logger.error('Could not create new user: %s', e)
-
+                user = UserModel(**user_query_args)
+                created = True
                 if created:
                     logger.debug('New user created: %s', user)
             else:
