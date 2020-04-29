@@ -19,7 +19,7 @@ import saml2
 
 
 def create_conf(sp_host='sp.example.com', idp_hosts=['idp.example.com'],
-                metadata_file='remote_metadata.xml'):
+                metadata_file='remote_metadata.xml', authn_requests_signed=True):
 
     try:
         from saml2.sigver import get_xmlsec_binary
@@ -55,6 +55,7 @@ def create_conf(sp_host='sp.example.com', idp_hosts=['idp.example.com'],
                 'optional_attributes': ['eduPersonAffiliation'],
                 'idp': {},  # this is filled later
                 'want_response_signed': False,
+                'authn_requests_signed': authn_requests_signed,
                 },
             },
 
