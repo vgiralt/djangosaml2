@@ -18,45 +18,28 @@ import logging
 from django.conf import settings
 from django.contrib import auth
 from django.contrib.auth.backends import ModelBackend
-from django.core.exceptions import (
-    MultipleObjectsReturned, ImproperlyConfigured,
-)
+from django.core.exceptions import (ImproperlyConfigured,
+                                    MultipleObjectsReturned)
 
-from djangosaml2.signals import pre_user_save
-
+from .signals import pre_user_save
 
 logger = logging.getLogger('djangosaml2')
 
 
 def get_model(model_path):
+    from django.apps import apps
     try:
-        from django.apps import apps
         return apps.get_model(model_path)
-    except ImportError:
-        # Django < 1.7 (cannot use the new app loader)
-        from django.db.models import get_model as django_get_model
-        try:
-            app_label, model_name = model_path.split('.')
-        except ValueError:
-            raise ImproperlyConfigured("SAML_USER_MODEL must be of the form "
-                "'app_label.model_name'")
-        user_model = django_get_model(app_label, model_name)
-        if user_model is None:
-            raise ImproperlyConfigured("SAML_USER_MODEL refers to model '%s' "
-                "that has not been installed" % model_path)
-        return user_model
+    except LookupError:
+        raise ImproperlyConfigured("SAML_USER_MODEL refers to model '%s' that has not been installed" % model_path)
+    except ValueError:
+        raise ImproperlyConfigured("SAML_USER_MODEL must be of the form 'app_label.model_name'")
 
 
 def get_saml_user_model():
-    try:
-        # djangosaml2 custom user model
+    if hasattr(settings, 'SAML_USER_MODEL'):
         return get_model(settings.SAML_USER_MODEL)
-    except AttributeError:
-        try:
-            # Django 1.5 Custom user model
-            return auth.get_user_model()
-        except AttributeError:
-            return auth.models.User
+    return auth.get_user_model()
 
 
 class Saml2Backend(ModelBackend):
@@ -89,7 +72,9 @@ class Saml2Backend(ModelBackend):
             else:
                 logger.error('The nameid is not available. Cannot find user without a nameid.')
         else:
-            saml_user = self.get_attribute_value(django_user_main_attribute, attributes, attribute_mapping)
+            saml_user = self.get_attribute_value(django_user_main_attribute,
+                                                 attributes,
+                                                 attribute_mapping)
 
         if saml_user is None:
             logger.error('Could not find saml_user value')
@@ -111,7 +96,11 @@ class Saml2Backend(ModelBackend):
         logger.debug('attribute_mapping: %s', attribute_mapping)
         for saml_attr, django_fields in attribute_mapping.items():
             if django_field in django_fields and saml_attr in attributes:
-                saml_user = attributes[saml_attr][0]
+                saml_user = attributes.get(saml_attr, [None])[0]
+                if not saml_user:
+                    logger.error('attributes[saml_attr] attribute '
+                                 'value is missing. Probably the user '
+                                 'session is expired.')
         return saml_user
 
     def is_authorized(self, attributes, attribute_mapping):
