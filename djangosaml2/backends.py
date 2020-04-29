@@ -69,9 +69,6 @@ def set_attribute(obj: Any, attr: str, new_value: Any) -> bool:
     return False
 
 
-UserModel = get_saml_user_model()
-
-
 class Saml2Backend(ModelBackend):
     def is_authorized(self, attributes, attribute_mapping) -> bool:
         """ Hook to allow custom authorization policies based on SAML attributes. """
@@ -89,6 +86,8 @@ class Saml2Backend(ModelBackend):
         """ Returns the attribute to perform a user lookup on, and the value to use for it.
             The value could be the name_id, or any other saml attribute from the request.
         """
+        UserModel = get_saml_user_model()
+
         # Lookup key
         user_lookup_key = get_django_user_lookup_attribute(UserModel)
 
@@ -124,6 +123,8 @@ class Saml2Backend(ModelBackend):
             e.g. customize this per IdP. The kwargs contain these additional params: session_info, attribute_mapping, attributes, request.
             The identity provider id can be found in kwargs['session_info']['issuer]
         """
+        UserModel = get_saml_user_model()
+
         # Construct query parameters to query the userModel with. An additional lookup modifier could be specified in the settings.
         user_query_args = {
             user_lookup_key + getattr(settings, 'SAML_DJANGO_USER_MAIN_ATTRIBUTE_LOOKUP', ''): user_lookup_value

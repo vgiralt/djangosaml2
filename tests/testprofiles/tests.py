@@ -18,11 +18,12 @@ import sys
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import User as DjangoUserModel
-from django.test import TestCase, override_settings
 from django.core.exceptions import ImproperlyConfigured
-from djangosaml2.backends import (Saml2Backend, get_model, get_saml_user_model, set_attribute,
-                                  get_django_user_lookup_attribute, get_django_user_lookup_attribute,
-                                  get_saml_user_model)
+from django.test import TestCase, override_settings
+
+from djangosaml2.backends import (Saml2Backend,
+                                  get_django_user_lookup_attribute, get_model,
+                                  get_saml_user_model, set_attribute)
 
 from .models import TestUser
 
@@ -190,9 +191,8 @@ class Saml2BackendTests(TestCase):
             logs.output,
         )
 
-    @override_settings(AUTH_USER_MODEL='testprofiles.RequiredFieldUser')
+    @override_settings(SAML_USER_MODEL='testprofiles.RequiredFieldUser')
     def test_create_user_with_required_fields(self):
-        backend = Saml2Backend()
         attribute_mapping = {
             'mail': ['email'],
             'mail_verified': ['email_verified']
@@ -202,12 +202,16 @@ class Saml2BackendTests(TestCase):
             'mail_verified': [True],
         }
         # User creation does not fail if several fields are required.
-        user = backend._get_or_create_saml2_user(
+        user, created = self.backend.get_or_create_user(
+            get_django_user_lookup_attribute(get_saml_user_model()),
             'john@example.org',
-            attributes,
-            attribute_mapping,
+            True
         )
+
         self.assertEquals(user.email, 'john@example.org')
+        self.assertIs(user.email_verified, None)
+
+        user = self.backend._update_user(user, attributes, attribute_mapping, created)
         self.assertIs(user.email_verified, True)
 
     def test_django_user_main_attribute(self):
