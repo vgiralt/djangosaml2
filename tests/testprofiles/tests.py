@@ -301,12 +301,14 @@ class CustomizedBackend(Saml2Backend):
     """
     def is_authorized(self, attributes, attribute_mapping):
         ''' Allow only staff users from the IDP '''
-        return attributes.get('is_staff', (None, ))[0] == 'true'
+        return attributes.get('is_staff', (None, ))[0] == True
     
-    def clean_attributes(self, attributes: dict):
+    def clean_attributes(self, attributes: dict) -> dict:
         ''' Keep only age attribute '''
         return {
-            'age': attributes.get('age', ()),
+            'age': attributes.get('age', (None, )),
+            'is_staff': attributes.get('is_staff', (None, )),
+            'uid': attributes.get('uid', (None, )),
         }
 
     def clean_user_main_attribute(self, main_attribute):
@@ -334,16 +336,48 @@ class CustomizedSaml2BackendTests(Saml2BackendTests):
             'sn': ('Doe', ),
             }
         self.assertFalse(self.backend.is_authorized(attributes, attribute_mapping))
-        attributes['is_staff'] = ('true', )
+        attributes['is_staff'] = (True, )
         self.assertTrue(self.backend.is_authorized(attributes, attribute_mapping))
 
     def test_clean_attributes(self):
         attributes = {'random': 'dummy', 'value': 123, 'age': '28'}
-        self.assertEqual(self.backend.clean_attributes(attributes), {'age': '28'})
+        self.assertEqual(self.backend.clean_attributes(attributes), {'age': '28', 'is_staff': (None,), 'uid': (None,)})
         
     def test_clean_user_main_attribute(self):
         self.assertEqual(self.backend.clean_user_main_attribute('va--l__ u -e'), 'va__l___u__e')
 
+    def test_authenticate(self):
+        attribute_mapping = {
+            'uid': ('username', ),
+            'mail': ('email', ),
+            'cn': ('first_name', ),
+            'sn': ('last_name', ),
+            'age': ('age', ),
+            'is_staff': ('is_staff', ),
+            }
+        attributes = {
+            'uid': ('john', ),
+            'mail': ('john@example.com', ),
+            'cn': ('John', ),
+            'sn': ('Doe', ),
+            'age': ('28', ),
+            'is_staff': (True, ),
+            }
+
+        self.assertEqual(self.user.age, '')
+        self.assertEqual(self.user.is_staff, False)
+
+        user = self.backend.authenticate(
+            None,
+            session_info={'ava': attributes},
+            attribute_mapping=attribute_mapping,
+        )
+
+        self.assertEqual(user, self.user)
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.age, '28')
+        self.assertEqual(self.user.is_staff, True)
 
 
 class LowerCaseSaml2Backend(Saml2Backend):

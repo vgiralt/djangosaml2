@@ -38,7 +38,7 @@ def get_model(model_path: str):
 
 
 def get_saml_user_model():
-    ''' Returns the user model specified in the settings, or the default one from this Django installation '''
+    """ Returns the user model specified in the settings, or the default one from this Django installation """
     if hasattr(settings, 'SAML_USER_MODEL'):
         return get_model(settings.SAML_USER_MODEL)
     return auth.get_user_model()
@@ -75,7 +75,7 @@ class Saml2Backend(ModelBackend):
         return True
 
     def clean_attributes(self, attributes: dict) -> dict:
-        """Hook to clean attributes from the SAML response. """
+        """ Hook to clean attributes from the SAML response. """
         return attributes
 
     def clean_user_main_attribute(self, main_attribute):
