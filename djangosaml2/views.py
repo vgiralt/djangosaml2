@@ -38,6 +38,11 @@ from saml2.response import (SignatureError, StatusAuthnFailed, StatusError,
                             StatusNoAuthnContext, StatusRequestDenied,
                             UnsolicitedResponse)
 from saml2.s_utils import UnsupportedBinding
+from saml2.response import (
+    StatusError, StatusAuthnFailed, SignatureError, StatusRequestDenied,
+    UnsolicitedResponse, StatusNoAuthnContext,
+)
+from saml2.mdstore import SourceNotFound
 from saml2.sigver import MissingKey
 from saml2.validate import ResponseLifetimeExceed, ToEarly
 from saml2.xmldsig import (  # support for SHA1 is required by spec
@@ -124,7 +129,15 @@ def login(request,
                     })
 
     selected_idp = request.GET.get('idp', None)
-    conf = get_config(config_loader_path, request)
+    try:
+        conf = get_config(config_loader_path, request)
+    except SourceNotFound as excp:
+        msg = ('Error, IdP EntityID was not found '
+               'in metadata: {}')
+        logger.exception(msg.format(excp))
+        return HttpResponse(msg.format(('Please contact '
+                                        'technical support.')),
+                            status=500)
 
     kwargs = {}
     # pysaml needs a string otherwise: "cannot serialize True (type bool)"
