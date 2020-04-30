@@ -113,6 +113,24 @@ If you want to allow several authentication mechanisms in your project
 you should set the LOGIN_URL option to another view and put a link in such
 view to the ``/saml2/login/`` view.
 
+Handling Post-Login Redirects
+-----------------------------
+It is often desireable for the client to maintain the URL state (or at least manage it) so that
+the URL once authentication has completed is consistent with the desired application state (such
+as retaining query parameters, etc.)  By default, the HttpRequest objects get_host() method is used
+to determine the hostname of the server, and redirect URL's are allowed so long as the destination
+host matches the output of get_host().  However, in some cases it becomes desireable for additional
+hostnames to be used for the post-login redirect.  In such cases, the setting::
+
+  SAML_ALLOWED_HOSTS = []
+  
+May be set to a list of allowed post-login redirect hostnames (note, the URL components beyond the hostname
+may be specified by the client - typically with the ?next= parameter.) 
+
+In the absence of a ?next= parameter, the LOGIN_REDIRECT_URL setting will be used (assuming the destination hostname 
+either matches the output of get_host() or is included in the SAML_ALLOWED_HOSTS setting)
+
+
 Preferred Logout binding
 ------------------------
 Use the following setting to choose your preferred binding for SP initiated logout requests::
