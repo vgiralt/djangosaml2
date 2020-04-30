@@ -15,7 +15,6 @@
 
 import codecs
 import os
-import sys
 from setuptools import setup, find_packages
 
 
@@ -23,35 +22,26 @@ def read(*rnames):
     return codecs.open(os.path.join(os.path.dirname(__file__), *rnames), encoding='utf-8').read()
 
 
-extra = {'test': []}
-if sys.version_info < (3, 4):
-    # Necessary to use assertLogs in tests
-    extra['test'].append('unittest2')
-
-
 setup(
     name='djangosaml2',
-    version='0.17.2',
+    version='0.18.1',
     description='pysaml2 integration for Django',
-    long_description='\n\n'.join([read('README.rst'), read('CHANGES')]),
+    long_description=read('README.rst'),
     classifiers=[
-        "Development Status :: 4 - Beta",
+        "Development Status :: 5 - Production/Stable",
         "Environment :: Web Environment",
         "Framework :: Django",
-        "Framework :: Django :: 1.8",
-        "Framework :: Django :: 1.9",
-        "Framework :: Django :: 1.10",
-        "Framework :: Django :: 1.11",
+        "Framework :: Django :: 2.2",
+        "Framework :: Django :: 3.0",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
         "Programming Language :: Python",
-        "Programming Language :: Python :: 2",
-        "Programming Language :: Python :: 2.7",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.4",
         "Programming Language :: Python :: 3.5",
         "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
         "Topic :: Internet :: WWW/HTTP",
         "Topic :: Internet :: WWW/HTTP :: WSGI",
         "Topic :: Security",
@@ -62,15 +52,18 @@ setup(
     author_email="lgs@yaco.es",
     maintainer="Jozef Knaperek",
     url="https://github.com/knaperek/djangosaml2",
-    download_url="https://pypi.python.org/pypi/djangosaml2",
+    download_url="https://pypi.org/project/djangosaml2/",
     license='Apache 2.0',
     packages=find_packages(exclude=["tests", "tests.*"]),
     include_package_data=True,
     zip_safe=False,
     install_requires=[
         'defusedxml>=0.4.1',
-        'Django>=1.8',
+        'Django>=2.2',
         'pysaml2>=4.6.0',
         ],
-    extras_require=extra,
+    tests_require=[
+        # Provides assert_called_once.
+        'mock;python_version < "3.6"',
+    ]
     )
