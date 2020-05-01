@@ -181,7 +181,7 @@ class Saml2BackendTests(TestCase):
         }
 
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
-            user, _ = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'john', True)
+            user, _ = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'john', True, None, None, None, None, None)
             self.backend._update_user(user, attributes, attribute_mapping)
 
         self.assertIn(
@@ -200,11 +200,7 @@ class Saml2BackendTests(TestCase):
             'mail_verified': [True],
         }
         # User creation does not fail if several fields are required.
-        user, created = self.backend.get_or_create_user(
-            self.backend._user_lookup_attribute,
-            'john@example.org',
-            True
-        )
+        user, created = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'john@example.org', True, None, None, None, None, None)
 
         self.assertEquals(user.email, 'john@example.org')
         self.assertIs(user.email_verified, None)
@@ -238,6 +234,7 @@ class Saml2BackendTests(TestCase):
                 self.backend._user_lookup_attribute,
                 'john',
                 False,
+                None, None, None, None, None
             )
 
         self.assertTrue(isinstance(user, TestUser))
@@ -252,6 +249,7 @@ class Saml2BackendTests(TestCase):
                     'age',
                     '',
                     False,
+                    None, None, None, None, None
                 )
 
         self.assertTrue(user is None)
@@ -268,6 +266,7 @@ class Saml2BackendTests(TestCase):
                     self.backend._user_lookup_attribute,
                     'paul',
                     False,
+                    None, None, None, None, None
                 )
 
         self.assertTrue(user is None)
@@ -284,6 +283,7 @@ class Saml2BackendTests(TestCase):
                     self.backend._user_lookup_attribute,
                     'paul',
                     True,
+                    None, None, None, None, None
                 )
 
         self.assertTrue(isinstance(user, TestUser))
@@ -312,9 +312,6 @@ class CustomizedBackend(Saml2Backend):
     def clean_user_main_attribute(self, main_attribute):
         ''' Replace all spaces an dashes by underscores '''
         return main_attribute.replace('-', '_').replace(' ', '_')
-
-    def get_or_create_user(self, user_lookup_key, user_lookup_value, create_unknown_user, **kwargs):
-        return super().get_or_create_user(user_lookup_key, user_lookup_value, create_unknown_user, **kwargs)
 
 
 class CustomizedSaml2BackendTests(Saml2BackendTests):
@@ -367,7 +364,7 @@ class CustomizedSaml2BackendTests(Saml2BackendTests):
 
         user = self.backend.authenticate(
             None,
-            session_info={'ava': attributes},
+            session_info={'ava': attributes, 'issuer': 'dummy_entity_id', 'name_id': 'john'},
             attribute_mapping=attribute_mapping,
         )
 
@@ -402,7 +399,7 @@ class LowerCaseSaml2BackendTest(TestCase):
         backend = LowerCaseSaml2Backend()
         user = backend.authenticate(
             None,
-            session_info={'ava': attributes},
+            session_info={'ava': attributes, 'issuer': 'dummy_entity_id', 'name_id': 'john'},
             attribute_mapping=attribute_mapping,
         )
         self.assertIsNotNone(user)
