@@ -25,6 +25,8 @@ DEBUG = True
 ALLOWED_HOSTS = []
 
 INSTALLED_APPS = (
+    'testprofiles',
+        
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -33,7 +35,6 @@ INSTALLED_APPS = (
     'django.contrib.staticfiles',
 
     'djangosaml2',
-    'testprofiles',
 )
 
 MIDDLEWARE = (
