@@ -32,24 +32,9 @@ def get_model(model_path: str):
     try:
         return apps.get_model(model_path)
     except LookupError:
-        raise ImproperlyConfigured("SAML_USER_MODEL refers to model '%s' that has not been installed" % model_path)
+        raise ImproperlyConfigured(f"SAML_USER_MODEL refers to model '{model_path}' that has not been installed")
     except ValueError:
-        raise ImproperlyConfigured("SAML_USER_MODEL must be of the form 'app_label.model_name'")
-
-
-def get_saml_user_model():
-    """ Returns the user model specified in the settings, or the default one from this Django installation """
-    if hasattr(settings, 'SAML_USER_MODEL'):
-        return get_model(settings.SAML_USER_MODEL)
-    return auth.get_user_model()
-
-
-def get_django_user_lookup_attribute(userModel) -> str:
-    """ Returns the attribute on which to match the identifier with for the user lookup
-    """
-    if hasattr(settings, 'SAML_DJANGO_USER_MAIN_ATTRIBUTE'):
-        return settings.SAML_DJANGO_USER_MAIN_ATTRIBUTE
-    return getattr(userModel, 'USERNAME_FIELD', 'username')
+        raise ImproperlyConfigured(f"SAML_USER_MODEL is {model_path}, but must be of the form 'app_label.model_name'")
 
 
 def set_attribute(obj: Any, attr: str, new_value: Any) -> bool:
@@ -70,26 +55,31 @@ def set_attribute(obj: Any, attr: str, new_value: Any) -> bool:
 
 
 class Saml2Backend(ModelBackend):
-    def is_authorized(self, attributes, attribute_mapping) -> bool:
-        """ Hook to allow custom authorization policies based on SAML attributes. """
-        return True
 
-    def clean_attributes(self, attributes: dict) -> dict:
-        """ Hook to clean attributes from the SAML response. """
-        return attributes
+    # ############################################
+    # Internal logic, not meant to be overwritten
+    # ############################################
 
-    def clean_user_main_attribute(self, main_attribute):
-        """ Clean the extracted user identifying value. No-op by default. """
-        return main_attribute
+    @property
+    def _user_model(self):
+        """ Returns the user model specified in the settings, or the default one from this Django installation """
+        if hasattr(settings, 'SAML_USER_MODEL'):
+            return get_model(settings.SAML_USER_MODEL)
+        return auth.get_user_model()
+
+    @property
+    def _user_lookup_attribute(self) -> str:
+        """ Returns the attribute on which to match the identifier with when performing a user lookup """
+        if hasattr(settings, 'SAML_DJANGO_USER_MAIN_ATTRIBUTE'):
+            return settings.SAML_DJANGO_USER_MAIN_ATTRIBUTE
+        return getattr(self._user_model, 'USERNAME_FIELD', 'username')
 
     def _extract_user_identifier_params(self, session_info, attributes, attribute_mapping) -> Tuple[str, Optional[Any]]:
         """ Returns the attribute to perform a user lookup on, and the value to use for it.
             The value could be the name_id, or any other saml attribute from the request.
         """
-        UserModel = get_saml_user_model()
-
         # Lookup key
-        user_lookup_key = get_django_user_lookup_attribute(UserModel)
+        user_lookup_key = self._user_lookup_attribute
 
         # Lookup value
         if getattr(settings, 'SAML_USE_NAME_ID_AS_USERNAME', False):
@@ -116,37 +106,6 @@ class Saml2Backend(ModelBackend):
                                  'value is missing. Probably the user '
                                  'session is expired.')
         return saml_attribute
-
-    def get_or_create_user(self, user_lookup_key, user_lookup_value, create_unknown_user, **kwargs) -> Tuple[Optional[settings.AUTH_USER_MODEL], bool]:
-        """ Look up the user to authenticate. If he doesn't exist, this method creates him (if so desired).
-            The default implementation looks only at the user_identifier. Override this method in order to do more complex behaviour,
-            e.g. customize this per IdP. The kwargs contain these additional params: session_info, attribute_mapping, attributes, request.
-            The identity provider id can be found in kwargs['session_info']['issuer]
-        """
-        UserModel = get_saml_user_model()
-
-        # Construct query parameters to query the userModel with. An additional lookup modifier could be specified in the settings.
-        user_query_args = {
-            user_lookup_key + getattr(settings, 'SAML_DJANGO_USER_MAIN_ATTRIBUTE_LOOKUP', ''): user_lookup_value
-        }
-
-        # Lookup existing user
-        user, created = None, False
-        try:
-            user = UserModel.objects.get(**user_query_args)
-        except MultipleObjectsReturned:
-            logger.error("Multiple users match, model: %s, lookup: %s", str(UserModel._meta), user_query_args)
-        except UserModel.DoesNotExist:
-            # Create new one if desired by settings
-            if create_unknown_user:
-                user = UserModel(**user_query_args)
-                created = True
-                if created:
-                    logger.debug('New user created: %s', user)
-            else:
-                logger.error('The user does not exist, model: %s, lookup: %s', str(UserModel._meta), user_query_args)
-
-        return user, created
 
     def authenticate(self, request, session_info=None, attribute_mapping=None, create_unknown_user=True, **kwargs):
         if session_info is None or attribute_mapping is None:
@@ -223,8 +182,56 @@ class Saml2Backend(ModelBackend):
 
         return user
 
-    def send_user_update_signal(self, user, attributes, user_modified) -> bool:
+    # ############################################
+    # Hooks to override by end-users in subclasses
+    # ############################################
+
+    def clean_attributes(self, attributes: dict) -> dict:
+        """ Hook to clean or filter attributes from the SAML response. No-op by default. """
+        return attributes
+
+    def is_authorized(self, attributes: dict, attribute_mapping: dict) -> bool:
+        """ Hook to allow custom authorization policies based on SAML attributes. True by default. """
+        return True
+
+    def clean_user_main_attribute(self, main_attribute: Any) -> Any:
+        """ Hook to clean the extracted user-identifying value. No-op by default. """
+        return main_attribute
+
+    def get_or_create_user(self, user_lookup_key: str, user_lookup_value: Any, create_unknown_user: bool, **kwargs) -> Tuple[Optional[settings.AUTH_USER_MODEL], bool]:
+        """ Look up the user to authenticate. If he doesn't exist, this method creates him (if so desired).
+            The default implementation looks only at the user_identifier. Override this method in order to do more complex behaviour,
+            e.g. customize this per IdP. The kwargs contain these additional params: session_info, attribute_mapping, attributes, request.
+            The identity provider id can be found in kwargs['session_info']['issuer]
+        """
+        UserModel = self._user_model
+
+        # Construct query parameters to query the userModel with. An additional lookup modifier could be specified in the settings.
+        user_query_args = {
+            user_lookup_key + getattr(settings, 'SAML_DJANGO_USER_MAIN_ATTRIBUTE_LOOKUP', ''): user_lookup_value
+        }
+
+        # Lookup existing user
+        user, created = None, False
+        try:
+            user = UserModel.objects.get(**user_query_args)
+        except MultipleObjectsReturned:
+            logger.error("Multiple users match, model: %s, lookup: %s", UserModel._meta, user_query_args)
+        except UserModel.DoesNotExist:
+            # Create new one if desired by settings
+            if create_unknown_user:
+                user = UserModel(**user_query_args)
+                created = True
+                logger.debug('New user created: %s', user)
+            else:
+                logger.error('The user does not exist, model: %s, lookup: %s', UserModel._meta, user_query_args)
+
+        return user, created
+
+    def send_user_update_signal(self, user: settings.AUTH_USER_MODEL, attributes: dict, user_modified: bool) -> bool:
         """ Send out a pre-save signal after the user has been updated with the SAML attributes.
+            This does not have to be overwritten, but depending on your custom implementation of get_or_create_user,
+            you might want to not send out this signal. In that case, just override this method to return False.
         """
         logger.debug('Sending the pre_save signal')
         signal_modified = any(

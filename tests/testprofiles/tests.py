@@ -21,9 +21,7 @@ from django.contrib.auth.models import User as DjangoUserModel
 from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase, override_settings
 
-from djangosaml2.backends import (Saml2Backend,
-                                  get_django_user_lookup_attribute, get_model,
-                                  get_saml_user_model, set_attribute)
+from djangosaml2.backends import (Saml2Backend, get_model, set_attribute)
 
 from .models import TestUser
 
@@ -44,26 +42,8 @@ class BackendUtilMethodsTests(TestCase):
     def test_get_model_invalid_specifier(self):
         nonexisting_model = 'random_package.specifier.testprofiles.NonExisting'
 
-        with self.assertRaisesMessage(ImproperlyConfigured, "SAML_USER_MODEL must be of the form 'app_label.model_name'"):
+        with self.assertRaisesMessage(ImproperlyConfigured, "SAML_USER_MODEL is random_package.specifier.testprofiles.NonExisting, but must be of the form 'app_label.model_name'"):
             get_model(nonexisting_model)
-
-    def test_get_saml_user_model_specified(self):
-        with override_settings(AUTH_USER_MODEL='auth.User'):
-            with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-                self.assertEqual(get_saml_user_model(), TestUser)
-
-    def test_get_saml_user_model_default(self):
-        with override_settings(AUTH_USER_MODEL='auth.User'):
-            self.assertEqual(get_saml_user_model(), DjangoUserModel)
-
-    def test_get_django_user_lookup_attribute_specified(self):
-        with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-            with override_settings(SAML_DJANGO_USER_MAIN_ATTRIBUTE='age'):
-                self.assertEqual(get_django_user_lookup_attribute(TestUser), 'age')
-
-    def test_get_django_user_lookup_attribute_default(self):
-        with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-            self.assertEqual(get_django_user_lookup_attribute(TestUser), 'username')
 
     def test_set_attribute(self):
         u = TestUser()
@@ -93,6 +73,24 @@ class Saml2BackendTests(TestCase):
     def setUp(self):
         self.backend = self.backend_cls()
         self.user = TestUser.objects.create(username='john')
+
+    def test_user_model_specified(self):
+        with override_settings(AUTH_USER_MODEL='auth.User'):
+            with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+                self.assertEqual(self.backend._user_model, TestUser)
+
+    def test_user_model_default(self):
+        with override_settings(AUTH_USER_MODEL='auth.User'):
+            self.assertEqual(self.backend._user_model, DjangoUserModel)
+
+    def test_user_lookup_attribute_specified(self):
+        with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+            with override_settings(SAML_DJANGO_USER_MAIN_ATTRIBUTE='age'):
+                self.assertEqual(self.backend._user_lookup_attribute, 'age')
+
+    def test_user_lookup_attribute_default(self):
+        with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+            self.assertEqual(self.backend._user_lookup_attribute, 'username')
 
     def test_is_authorized(self):
         self.assertTrue(self.backend.is_authorized({}, {}))
@@ -183,7 +181,7 @@ class Saml2BackendTests(TestCase):
         }
 
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
-            user, _ = self.backend.get_or_create_user(get_django_user_lookup_attribute(get_saml_user_model()), 'john', True)
+            user, _ = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'john', True)
             self.backend._update_user(user, attributes, attribute_mapping)
 
         self.assertIn(
@@ -203,7 +201,7 @@ class Saml2BackendTests(TestCase):
         }
         # User creation does not fail if several fields are required.
         user, created = self.backend.get_or_create_user(
-            get_django_user_lookup_attribute(get_saml_user_model()),
+            self.backend._user_lookup_attribute,
             'john@example.org',
             True
         )
@@ -217,27 +215,27 @@ class Saml2BackendTests(TestCase):
     def test_django_user_main_attribute(self):
         old_username_field = User.USERNAME_FIELD
         User.USERNAME_FIELD = 'slug'
-        self.assertEqual(get_django_user_lookup_attribute(get_saml_user_model()), 'slug')
+        self.assertEqual(self.backend._user_lookup_attribute, 'slug')
         User.USERNAME_FIELD = old_username_field
 
         with override_settings(AUTH_USER_MODEL='auth.User'):
             self.assertEqual(
                 DjangoUserModel.USERNAME_FIELD,
-                get_django_user_lookup_attribute(get_saml_user_model()))
+                self.backend._user_lookup_attribute)
 
         with override_settings(
                 AUTH_USER_MODEL='testprofiles.StandaloneUserModel'):
             self.assertEqual(
-                get_django_user_lookup_attribute(get_saml_user_model()),
+                self.backend._user_lookup_attribute,
                 'username')
 
         with override_settings(SAML_DJANGO_USER_MAIN_ATTRIBUTE='foo'):
-            self.assertEqual(get_django_user_lookup_attribute(get_saml_user_model()), 'foo')
+            self.assertEqual(self.backend._user_lookup_attribute, 'foo')
 
     def test_get_or_create_user_existing(self):
         with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
             user, created = self.backend.get_or_create_user(
-                get_django_user_lookup_attribute(get_saml_user_model()),
+                self.backend._user_lookup_attribute,
                 'john',
                 False,
             )
@@ -267,7 +265,7 @@ class Saml2BackendTests(TestCase):
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
             with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
                 user, created = self.backend.get_or_create_user(
-                    get_django_user_lookup_attribute(get_saml_user_model()),
+                    self.backend._user_lookup_attribute,
                     'paul',
                     False,
                 )
@@ -283,7 +281,7 @@ class Saml2BackendTests(TestCase):
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
             with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
                 user, created = self.backend.get_or_create_user(
-                    get_django_user_lookup_attribute(get_saml_user_model()),
+                    self.backend._user_lookup_attribute,
                     'paul',
                     True,
                 )
