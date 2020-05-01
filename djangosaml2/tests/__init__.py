@@ -16,11 +16,10 @@
 
 import base64
 import datetime
-import mock
 import re
 import sys
 
-from unittest import skip
+from unittest import mock, skip
 
 from django.conf import settings
 from django.contrib.auth import SESSION_KEY, get_user_model
