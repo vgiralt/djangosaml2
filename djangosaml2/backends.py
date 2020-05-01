@@ -215,6 +215,17 @@ class Saml2Backend(ModelBackend):
                 else:
                     logger.debug('Could not find attribute "%s" on user "%s"', attr, user)
 
+        signal_modified = self.send_user_update_signal(user, attributes, user_modified)
+
+        if user_modified or signal_modified or force_save:
+            user.save()
+            logger.debug('User updated with incoming attributes')
+
+        return user
+
+    def send_user_update_signal(self, user, attributes, user_modified) -> bool:
+        """ Send out a pre-save signal after the user has been updated with the SAML attributes.
+        """
         logger.debug('Sending the pre_save signal')
         signal_modified = any(
             [response for receiver, response
@@ -223,9 +234,4 @@ class Saml2Backend(ModelBackend):
                                           attributes=attributes,
                                           user_modified=user_modified)]
             )
-
-        if user_modified or signal_modified or force_save:
-            user.save()
-            logger.debug('User updated with incoming attributes')
-
-        return user
+        return signal_modified
