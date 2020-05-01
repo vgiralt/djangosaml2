@@ -2,14 +2,13 @@
 djangosaml2
 ===========
 
-.. image:: https://travis-ci.org/knaperek/djangosaml2.svg?branch=master
-    :target: https://travis-ci.org/knaperek/djangosaml2
-    :align: left
+.. image:: https://github.com/knaperek/djangosaml2/workflows/djangosaml2/badge.svg
+    :target: https://github.com/knaperek/djangosaml2/workflows/djangosaml2/badge.svg
 
 
-djangosaml2 is a Django application that integrates the PySAML2 library
-into your project. This mean that you can protect your Django based project
-with a service provider based on PySAML. This way it will talk SAML2 with
+A Django application that builds a Fully Compliant SAML2 Service Provider on top of PySAML2 library.
+This mean that you can protect your Django based project
+with a SAML2 SSO Authentication. This way it will talk SAML2 with
 your Identity Provider allowing you to use this authentication mechanism.
 This document will guide you through a few simple steps to accomplish
 such goal.
