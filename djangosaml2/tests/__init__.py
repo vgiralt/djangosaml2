@@ -16,9 +16,11 @@
 
 import base64
 import datetime
+import mock
 import re
 import sys
-from unittest import mock, skip
+
+from unittest import skip
 
 from django.conf import settings
 from django.contrib.auth import SESSION_KEY, get_user_model
@@ -35,6 +37,7 @@ from djangosaml2.cache import OutstandingQueriesCache
 from djangosaml2.conf import get_config
 from djangosaml2.signals import post_authenticated
 from djangosaml2.tests import conf
+from djangosaml2.tests.utils import SAMLPostFormParser
 from djangosaml2.tests.auth_response import auth_response
 from djangosaml2.views import finish_logout
 
@@ -105,6 +108,35 @@ class SAML2Tests(TestCase):
 
     def b64_for_post(self, xml_text, encoding='utf-8'):
         return base64.b64encode(xml_text.encode(encoding)).decode('ascii')
+
+    def test_unsigned_post_authn_request(self):
+        """
+        Test that unsigned authentication requests via POST binding
+        does not error.
+
+        https://github.com/knaperek/djangosaml2/issues/168
+        """
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_post_binding.xml',
+            authn_requests_signed=False
+        )
+        response = self.client.get(reverse('saml2_login'))
+
+        self.assertEqual(response.status_code, 200)
+
+        # Using POST-binding returns a page with form containing the SAMLRequest
+        response_parser = SAMLPostFormParser()
+        response_parser.feed(response.content.decode('utf-8'))
+        saml_request = response_parser.saml_request_value
+        expected_request = """<samlp:AuthnRequest xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" AssertionConsumerServiceURL="http://sp.example.com/saml2/acs/" Destination="https://idp.example.com/simplesaml/saml2/idp/SSOService.php" ID="XXXXXXXXXXXXXXXXXXXXXX" IssueInstant="2010-01-01T00:00:00Z" ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Version="2.0"><saml:Issuer Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity">http://sp.example.com/saml2/metadata/</saml:Issuer><samlp:NameIDPolicy AllowCreate="false" Format="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent" /></samlp:AuthnRequest>"""
+
+        self.assertIsNotNone(saml_request)
+        self.assertSAMLRequestsEquals(
+            base64.b64decode(saml_request).decode('utf-8'),
+            expected_request
+        )
 
     def test_login_evil_redirect(self):
         """

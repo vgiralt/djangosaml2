@@ -19,7 +19,7 @@ import saml2
 
 
 def create_conf(sp_host='sp.example.com', idp_hosts=['idp.example.com'],
-                metadata_file='remote_metadata.xml'):
+                metadata_file='remote_metadata.xml', authn_requests_signed=None):
 
     try:
         from saml2.sigver import get_xmlsec_binary
@@ -89,6 +89,9 @@ def create_conf(sp_host='sp.example.com', idp_hosts=['idp.example.com'],
             },
         'valid_for': 24,
         }
+
+    if authn_requests_signed is not None:
+        config['service']['sp']['authn_requests_signed'] = authn_requests_signed
 
     for idp in idp_hosts:
         entity_id = 'https://%s/simplesaml/saml2/idp/metadata.php' % idp
