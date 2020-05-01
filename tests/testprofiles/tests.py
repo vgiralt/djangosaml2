@@ -19,21 +19,9 @@ import sys
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import User as DjangoUserModel
 from django.test import TestCase, override_settings
-
 from djangosaml2.backends import Saml2Backend
 
 User = get_user_model()
-
-if sys.version_info < (3, 4):
-    # Monkey-patch TestCase to add the assertLogs method introduced in
-    # Python 3.4
-    from unittest2.case import _AssertLogsContext
-
-    class LoggerTestCase(TestCase):
-        def assertLogs(self, logger=None, level=None):
-            return _AssertLogsContext(self, logger, level)
-
-    TestCase = LoggerTestCase
 
 
 class Saml2BackendTests(TestCase):
