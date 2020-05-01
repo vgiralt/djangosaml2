@@ -134,8 +134,7 @@ class Saml2Backend(ModelBackend):
 
         user, created = self.get_or_create_user(
             user_lookup_key, user_lookup_value, create_unknown_user,
-            idp_entityid=session_info['issuer'], name_id=session_info['name_id'],
-            attributes=attributes, attribute_mapping=attribute_mapping, request=request
+            idp_entityid=session_info['issuer'], attributes=attributes, attribute_mapping=attribute_mapping, request=request
         )
 
         # Update user with new attributes from incoming request
@@ -201,15 +200,12 @@ class Saml2Backend(ModelBackend):
 
     def get_or_create_user(self,
             user_lookup_key: str, user_lookup_value: Any, create_unknown_user: bool,
-            idp_entityid: str, name_id: str, attributes: dict, attribute_mapping: dict, request
+            idp_entityid: str, attributes: dict, attribute_mapping: dict, request
         ) -> Tuple[Optional[settings.AUTH_USER_MODEL], bool]:
         """ Look up the user to authenticate. If he doesn't exist, this method creates him (if so desired).
             The default implementation looks only at the user_identifier. Override this method in order to do more complex behaviour,
             e.g. customize this per IdP.
         """
-        print(f"idp_entityid: {idp_entityid}")
-        print(f"name_id: {name_id}")
-        print(f"user_lookup_value: {user_lookup_value}")
         UserModel = self._user_model
 
         # Construct query parameters to query the userModel with. An additional lookup modifier could be specified in the settings.

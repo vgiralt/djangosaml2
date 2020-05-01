@@ -181,7 +181,7 @@ class Saml2BackendTests(TestCase):
         }
 
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
-            user, _ = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'john', True, None, None, None, None, None)
+            user, _ = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'john', True, None, None, None, None)
             self.backend._update_user(user, attributes, attribute_mapping)
 
         self.assertIn(
@@ -200,7 +200,7 @@ class Saml2BackendTests(TestCase):
             'mail_verified': [True],
         }
         # User creation does not fail if several fields are required.
-        user, created = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'john@example.org', True, None, None, None, None, None)
+        user, created = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'john@example.org', True, None, None, None, None)
 
         self.assertEquals(user.email, 'john@example.org')
         self.assertIs(user.email_verified, None)
@@ -230,12 +230,7 @@ class Saml2BackendTests(TestCase):
 
     def test_get_or_create_user_existing(self):
         with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-            user, created = self.backend.get_or_create_user(
-                self.backend._user_lookup_attribute,
-                'john',
-                False,
-                None, None, None, None, None
-            )
+            user, created = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'john', False, None, None, None, None)
 
         self.assertTrue(isinstance(user, TestUser))
         self.assertFalse(created)
@@ -245,12 +240,7 @@ class Saml2BackendTests(TestCase):
 
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
             with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-                user, created = self.backend.get_or_create_user(
-                    'age',
-                    '',
-                    False,
-                    None, None, None, None, None
-                )
+                user, created = self.backend.get_or_create_user('age', '', False, None, None, None, None)
 
         self.assertTrue(user is None)
         self.assertFalse(created)
@@ -262,12 +252,7 @@ class Saml2BackendTests(TestCase):
     def test_get_or_create_user_no_create(self):
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
             with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-                user, created = self.backend.get_or_create_user(
-                    self.backend._user_lookup_attribute,
-                    'paul',
-                    False,
-                    None, None, None, None, None
-                )
+                user, created = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'paul', False, None, None, None, None)
 
         self.assertTrue(user is None)
         self.assertFalse(created)
@@ -279,12 +264,7 @@ class Saml2BackendTests(TestCase):
     def test_get_or_create_user_create(self):
         with self.assertLogs('djangosaml2', level='DEBUG') as logs:
             with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
-                user, created = self.backend.get_or_create_user(
-                    self.backend._user_lookup_attribute,
-                    'paul',
-                    True,
-                    None, None, None, None, None
-                )
+                user, created = self.backend.get_or_create_user(self.backend._user_lookup_attribute, 'paul', True, None, None, None, None)
 
         self.assertTrue(isinstance(user, TestUser))
         self.assertTrue(created)
@@ -364,7 +344,7 @@ class CustomizedSaml2BackendTests(Saml2BackendTests):
 
         user = self.backend.authenticate(
             None,
-            session_info={'ava': attributes, 'issuer': 'dummy_entity_id', 'name_id': 'john'},
+            session_info={'ava': attributes, 'issuer': 'dummy_entity_id'},
             attribute_mapping=attribute_mapping,
         )
 
@@ -373,33 +353,3 @@ class CustomizedSaml2BackendTests(Saml2BackendTests):
         self.user.refresh_from_db()
         self.assertEqual(self.user.age, '28')
         self.assertEqual(self.user.is_staff, True)
-
-
-class LowerCaseSaml2Backend(Saml2Backend):
-    def clean_attributes(self, attributes):
-        return dict([k.lower(), v] for k, v in attributes.items())
-
-
-class LowerCaseSaml2BackendTest(TestCase):
-    def test_update_user_clean_attributes(self):
-        user = User.objects.create(username='john')
-        attribute_mapping = {
-            'uid': ('username', ),
-            'mail': ('email', ),
-            'cn': ('first_name', ),
-            'sn': ('last_name', ),
-            }
-        attributes = {
-            'UID': ['john'],
-            'MAIL': ['john@example.com'],
-            'CN': ['John'],
-            'SN': [],
-        }
-
-        backend = LowerCaseSaml2Backend()
-        user = backend.authenticate(
-            None,
-            session_info={'ava': attributes, 'issuer': 'dummy_entity_id', 'name_id': 'john'},
-            attribute_mapping=attribute_mapping,
-        )
-        self.assertIsNotNone(user)
