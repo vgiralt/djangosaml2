@@ -16,6 +16,7 @@
 import logging
 from typing import Any, Optional, Tuple
 
+from django.apps import apps
 from django.conf import settings
 from django.contrib import auth
 from django.contrib.auth.backends import ModelBackend
@@ -27,30 +28,16 @@ from .signals import pre_user_save
 logger = logging.getLogger('djangosaml2')
 
 
-def get_model(model_path: str):
-    from django.apps import apps
-    try:
-        return apps.get_model(model_path)
-    except LookupError:
-        raise ImproperlyConfigured(f"SAML_USER_MODEL refers to model '{model_path}' that has not been installed")
-    except ValueError:
-        raise ImproperlyConfigured(f"SAML_USER_MODEL is {model_path}, but must be of the form 'app_label.model_name'")
-
-
 def set_attribute(obj: Any, attr: str, new_value: Any) -> bool:
     """ Set an attribute of an object to a specific value, if it wasn't that already.
         Return True if the attribute was changed and False otherwise.
     """
-
     if not hasattr(obj, attr):
         setattr(obj, attr, new_value)
         return True
-    else:
-        old_value = getattr(obj, attr)
-        if new_value != old_value:
-            setattr(obj, attr, new_value)
-            return True
-
+    if new_value != getattr(obj, attr):
+        setattr(obj, attr, new_value)
+        return True
     return False
 
 
@@ -64,7 +51,13 @@ class Saml2Backend(ModelBackend):
     def _user_model(self):
         """ Returns the user model specified in the settings, or the default one from this Django installation """
         if hasattr(settings, 'SAML_USER_MODEL'):
-            return get_model(settings.SAML_USER_MODEL)
+            try:
+                return apps.get_model(settings.SAML_USER_MODEL)
+            except LookupError:
+                raise ImproperlyConfigured(f"Model '{settings.SAML_USER_MODEL}' could not be loaded")
+            except ValueError:
+                raise ImproperlyConfigured(f"Model was specified as '{settings.SAML_USER_MODEL}', but it must be of the form 'app_label.model_name'")
+
         return auth.get_user_model()
 
     @property
