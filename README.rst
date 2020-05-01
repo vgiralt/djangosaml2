@@ -224,6 +224,7 @@ We will see a typical configuration for protecting a Django project::
             'optional_attributes': ['eduPersonAffiliation'],
 
             # in this section the list of IdPs we talk to are defined
+            # This is not mandatory! All the IdP available in the metadata will be considered.
             'idp': {
                 # we do not need a WAYF service since there is
                 # only an IdP defined here. This IdP should be
@@ -338,7 +339,7 @@ Custom error handler
 
 When an error occurs during the authentication flow, djangosaml2 will render
 a simple error page with an error message and status code. You can customize
-this behaviour by specifying the path to your own error handler in the settings:
+this behaviour by specifying the path to your own error handler in the settings::
 
   SAML_ACS_FAILURE_RESPONSE_FUNCTION = 'python.path.to.your.view'
 
@@ -395,10 +396,12 @@ can set in the settings.py file::
 
 This setting is True by default.
 
+The following setting lets you specify a URL for redirection after a successful
+authentication::
+
   ACS_DEFAULT_REDIRECT_URL = reverse_lazy('some_url_name')
 
-This setting lets you specify a URL for redirection after a successful
-authentication. Particularly useful when you only plan to use
+Particularly useful when you only plan to use
 IdP initiated login and the IdP does not have a configured RelayState
 parameter. The default is ``/``.
 

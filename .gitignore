@@ -12,3 +12,5 @@ venv
 tags
 .idea/
 .vscode/
+build/
+dist/
