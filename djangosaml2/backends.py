@@ -15,6 +15,7 @@
 
 import logging
 from typing import Any, Optional, Tuple
+import warnings
 
 from django.apps import apps
 from django.conf import settings
@@ -237,3 +238,40 @@ class Saml2Backend(ModelBackend):
                                           user_modified=user_modified)]
             )
         return signal_modified
+
+    # ############################################
+    # Backwards-compatibility stubs
+    # ############################################
+
+    def get_attribute_value(self, django_field, attributes, attribute_mapping):
+        warnings.warn("get_attribute_value() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)
+        self._get_attribute_value(django_field, attributes, attribute_mapping)
+
+    def get_django_user_main_attribute(self):
+        warnings.warn("get_django_user_main_attribute() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)
+        self._user_lookup_attribute
+
+    def get_django_user_main_attribute_lookup(self):
+        warnings.warn("get_django_user_main_attribute_lookup() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)
+        return getattr(settings, 'SAML_DJANGO_USER_MAIN_ATTRIBUTE_LOOKUP', '')
+
+    def get_user_query_args(self, main_attribute):
+        warnings.warn("get_user_query_args() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)
+        return {self.get_django_user_main_attribute() + self.get_django_user_main_attribute_lookup()}
+    
+    def configure_user(self, user, attributes, attribute_mapping):
+        warnings.warn("configure_user() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)
+        return self._update_user(user, attributes, attribute_mapping)
+
+    def update_user(self, user, attributes, attribute_mapping, force_save=False):
+        warnings.warn("update_user() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)
+        return self._update_user(user, attributes, attribute_mapping)
+
+    def _set_attribute(self, obj, attr, value):
+        warnings.warn("_set_attribute() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)
+        return set_attribute(obj, attr, value)
+
+
+def get_saml_user_model():
+    warnings.warn("_set_attribute() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)
+    return Saml2Backend()._user_model
