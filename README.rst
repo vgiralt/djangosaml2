@@ -81,15 +81,9 @@ A typical configuration would look like this::
       'djangosaml2.backends.Saml2Backend',
   )
 
-.. note::
-
-  Before djangosaml2 0.5.0 this authentication backend was
-  automatically added by djangosaml2. This turned out to be
-  a bad idea since some applications want to use their own
-  custom policies for authorization and the authentication
-  backend is a good place to define that. Starting from
-  djangosaml2 0.5.0 it is now possible to define such
-  backends.
+It is possible to subclass the provided Saml2Backend and customize the behaviour
+by overriding some methods. This way you can perform your custom cleaning or authorization
+policy, and modify the way users are looked up and created.
 
 Finally we have to tell Django what the new login url we want to use is::
 
