@@ -26,7 +26,6 @@ from django.http import HttpResponseServerError  # 50x
 from django.http import Http404, HttpResponse
 from django.shortcuts import render
 from django.template import TemplateDoesNotExist
-from django.utils.http import is_safe_url
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from saml2 import BINDING_HTTP_REDIRECT, BINDING_HTTP_POST
@@ -55,7 +54,8 @@ from .exceptions import IdPConfigurationMissing
 from .overrides import Saml2Client
 from .signals import post_authenticated
 from .utils import (available_idps, fail_acs_response, get_custom_setting,
-                    get_idp_sso_supported_bindings, get_location)
+                    get_idp_sso_supported_bindings, get_location,
+                    validate_referral_url)
 
 try:
     from django.contrib.auth.views import LogoutView
@@ -104,17 +104,7 @@ def login(request,
     if not came_from:
         logger.warning('The next parameter exists but is empty')
         came_from = settings.LOGIN_REDIRECT_URL
-
-    # Ensure the user-originating redirection url is safe.
-    # By setting SAML_ALLOWED_HOSTS in settings.py the user may provide a list of "allowed"
-    # hostnames for post-login redirects, much like one would specify ALLOWED_HOSTS .
-    # If this setting is absent, the default is to use the hostname that was used for the current
-    # request.
-    saml_allowed_hosts = set(getattr(settings, 'SAML_ALLOWED_HOSTS', [request.get_host()]))
-
-    if not is_safe_url(url=came_from, allowed_hosts=saml_allowed_hosts):
-        came_from = settings.LOGIN_REDIRECT_URL
-
+    came_from = validate_referral_url(request, came_from)
 
     # if the user is already authenticated that maybe because of two reasons:
     # A) He has this URL in two browser windows and in the other one he
@@ -358,16 +348,8 @@ def assertion_consumer_service(request,
     if not relay_state:
         logger.warning('The RelayState parameter exists but is empty')
         relay_state = default_relay_state
-    
-    # Ensure the user-originating redirection url is safe.
-    # By setting SAML_ALLOWED_HOSTS in settings.py the user may provide a list of "allowed"
-    # hostnames for post-login redirects, much like one would specify ALLOWED_HOSTS .
-    # If this setting is absent, the default is to use the hostname that was used for the current
-    # request.
-    saml_allowed_hosts = set(getattr(settings, 'SAML_ALLOWED_HOSTS', [request.get_host()]))
-    
-    if not is_safe_url(url=relay_state, allowed_hosts=saml_allowed_hosts):
-        relay_state = settings.LOGIN_REDIRECT_URL
+    relay_state = validate_referral_url(request, relay_state)
+
     logger.debug('Redirecting to the RelayState: %s', relay_state)
     return HttpResponseRedirect(relay_state)
 

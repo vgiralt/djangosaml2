@@ -14,6 +14,7 @@
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
+from django.utils.http import is_safe_url
 from django.utils.module_loading import import_string
 from saml2.s_utils import UnknownSystemEntity
 
@@ -80,3 +81,17 @@ def fail_acs_response(request, *args, **kwargs):
     failure_function = import_string(get_custom_setting('SAML_ACS_FAILURE_RESPONSE_FUNCTION',
                                                         'djangosaml2.acs_failures.template_failure'))
     return failure_function(request, *args, **kwargs)
+
+
+def validate_referral_url(request, url):
+    # Ensure the user-originating redirection url is safe.
+    # By setting SAML_ALLOWED_HOSTS in settings.py the user may provide a list of "allowed"
+    # hostnames for post-login redirects, much like one would specify ALLOWED_HOSTS .
+    # If this setting is absent, the default is to use the hostname that was used for the current
+    # request.
+    saml_allowed_hosts = set(getattr(settings, 'SAML_ALLOWED_HOSTS', [request.get_host()]))
+
+    if not is_safe_url(url=url, allowed_hosts=saml_allowed_hosts):
+        return settings.LOGIN_REDIRECT_URL
+    else:
+        return url
