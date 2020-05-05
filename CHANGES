@@ -1,5 +1,20 @@
 Changes
 =======
+
+0.19.0 (2020-05-x)
+------------------
+
+- Support several required fields during User creation
+- Don't pass sigalg parameter when not signing login request
+- ALLOW_SAML_HOSTNAMES validation for redirect
+- Custom attribute mapping for Django user model (example)
+- Slo absence workaround
+- Metadata EntityID exception handling
+- Fix unsigned authentication request to POST endpoint
+- py38 Test fixes
+- CI with Github actions
+- Backend restructuring for easier subclassing
+
 0.18.1 (2020-02-15)
 ----------
 - Fixed regression from 0.18.0. Thanks to OskarPersson
