@@ -19,7 +19,7 @@ from . import views
 
 urlpatterns = [
     path('login/', views.login, name='saml2_login'),
-    path('acs/', views.assertion_consumer_service, name='saml2_acs'),
+    path('acs/', views.AssertionConsumerServiceView.as_view(), name='saml2_acs'),
     path('logout/', views.logout, name='saml2_logout'),
     path('ls/', views.logout_service, name='saml2_ls'),
     path('ls/post/', views.logout_service_post, name='saml2_ls_post'),
