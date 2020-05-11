@@ -14,6 +14,8 @@ Changes
 - py38 Test fixes
 - CI with Github actions
 - Backend restructuring for easier subclassing
+- Assertion consumer service now more extensible as a class-based view
+  with hooks that can be overridden by subclass implementations.
 
 0.18.1 (2020-02-15)
 ----------
