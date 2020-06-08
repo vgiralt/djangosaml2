@@ -157,7 +157,7 @@ def login(request,
                                            'its metadata is expired.'))
         if selected_idp is None:
             selected_idp = list(idps.keys())[0]
-    
+
     # choose a binding to try first
     sign_requests = getattr(conf, '_sp_authn_requests_signed', False)
     binding = BINDING_HTTP_POST if sign_requests else BINDING_HTTP_REDIRECT
@@ -348,7 +348,12 @@ class AssertionConsumerServiceView(View):
         logger.debug("User %s authenticated via SSO.", user)
         logger.debug('Sending the post_authenticated signal')
 
-        post_authenticated.send_robust(sender=user, session_info=session_info)
+        # post_authenticated.send_robust(sender=user, session_info=session_info)
+        # https://github.com/knaperek/djangosaml2/issues/117
+        post_authenticated.send_robust(sender=user.__class__,
+                                       instance=user,
+                                       session_info=session_info,
+                                       request=request)
         self.customize_session(user, session_info)
 
         relay_state = self.build_relay_state()

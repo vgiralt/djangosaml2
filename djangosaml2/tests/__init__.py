@@ -25,13 +25,14 @@ from django.conf import settings
 from django.contrib.auth import SESSION_KEY, get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.sessions.middleware import SessionMiddleware
+from django.http.request import HttpRequest
 from django.template import Context, Template
 from django.test import TestCase
 from django.test.client import RequestFactory
 from djangosaml2 import views
 from djangosaml2.cache import OutstandingQueriesCache
 from djangosaml2.conf import get_config
-from djangosaml2.signals import post_authenticated
+from djangosaml2.signals import post_authenticated, pre_user_save
 from djangosaml2.tests import conf
 from djangosaml2.tests.utils import SAMLPostFormParser
 from djangosaml2.tests.auth_response import auth_response
@@ -496,15 +497,50 @@ ID4zT0FcZASGuthM56rRJJSx
         self.assertEqual(response.content, expected_metadata)
 
     def test_post_authenticated_signal(self):
+        self.called = []
 
-        def signal_handler(signal, user, session_info):
-            self.assertEqual(isinstance(user, User), True)
+        def signal_handler(sender, instance, session_info, request, **kwargs):
+            self.called.append({'sender': sender, 'instance': instance, 'request': request, 'session_info': session_info})
 
         post_authenticated.connect(signal_handler, dispatch_uid='test_signal')
 
         self.do_login()
 
+        # make sure the handler is only called once
+        self.assertEqual(len(self.called), 1)
+        # test 'sender', this should be User.__class__
+        self.assertEqual(self.called[0]['sender'], get_user_model(), 'post_authenticated signal sender is not a User')
+        # test 'instance', this should be User
+        self.assertIsInstance(self.called[0]['instance'], get_user_model(), 'post_authenticated signal did not send a User instance')
+        # test the request
+        self.assertIsInstance(self.called[0]['request'], HttpRequest, 'post_authenticated signal did not send a request')
+        # test the session_info
+        self.assertIsInstance(self.called[0]['session_info'], dict, 'post_authenticated signal did not send a session_info dict')
+
         post_authenticated.disconnect(dispatch_uid='test_signal')
+
+    def test_pre_user_save_signal(self):
+        self.called = []
+
+        def signal_handler(sender, instance, attributes, user_modified, **kwargs):
+            self.called.append({'sender': sender, 'instance': instance, 'attributes': attributes, 'user_modified': user_modified})
+
+        pre_user_save.connect(signal_handler, dispatch_uid='test_signal')
+
+        self.do_login()
+
+        # make sure the handler is only called once
+        self.assertEqual(len(self.called), 1)
+        # test 'sender', this should be User.__class__
+        self.assertEqual(self.called[0]['sender'], get_user_model(), 'pre_user_save signal sender is not a User')
+        # test 'instance', this should be User
+        self.assertIsInstance(self.called[0]['instance'], get_user_model(), 'pre_user_save signal did not send a User instance')
+        # test the attributes
+        self.assertIsInstance(self.called[0]['attributes'], dict, 'pre_user_save signal did not send attributes')
+        # test the user_modified
+        self.assertIsInstance(self.called[0]['user_modified'], bool, 'pre_user_save signal did not send a user_modified bool')
+
+        pre_user_save.disconnect(dispatch_uid='test_signal')
 
     def test_idplist_templatetag(self):
         settings.SAML_CONFIG = conf.create_conf(
