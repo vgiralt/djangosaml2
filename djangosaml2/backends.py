@@ -208,6 +208,7 @@ class Saml2Backend(ModelBackend):
         }
 
         # Lookup existing user
+        # Lookup existing user
         user, created = None, False
         try:
             user = UserModel.objects.get(**user_query_args)
@@ -216,7 +217,7 @@ class Saml2Backend(ModelBackend):
         except UserModel.DoesNotExist:
             # Create new one if desired by settings
             if create_unknown_user:
-                user = UserModel(**user_query_args)
+                user = UserModel(**{ user_lookup_key: user_lookup_value })
                 created = True
                 logger.debug('New user created: %s', user)
             else:
