@@ -1,6 +1,9 @@
 Changes
 =======
 
+0.19.2 (not released)
+- Bugfix: Always save newly created users when ATTRIBUTE_MAPPING is missing in the config
+
 0.19.1 (2020-06-15)
 ------------------
 - Fixes creating new user with iexact lookup
