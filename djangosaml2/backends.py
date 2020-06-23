@@ -144,10 +144,14 @@ class Saml2Backend(ModelBackend):
             SAML_ATTRIBUTE_MAPPING. For each attribute, if the user object has
             that field defined it will be set.
         """
+        # Always save a brand new user instance
+        user_modified = user.pk is None
+
         if not attribute_mapping:
+            if user_modified:
+                user.save()
             return user
 
-        user_modified = False
         for saml_attr, django_attrs in attribute_mapping.items():
             attr_value_list = attributes.get(saml_attr)
             if not attr_value_list:
