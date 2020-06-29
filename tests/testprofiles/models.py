@@ -38,5 +38,8 @@ class RequiredFieldUser(models.Model):
 
     USERNAME_FIELD = 'email'
 
+    def __repr__(self):
+        return self.email
+
     def set_unusable_password(self):
         pass

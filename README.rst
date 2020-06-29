@@ -547,8 +547,6 @@ You can also run the unit tests as follows::
   python3 tests/manage.py migrate
   
   python tests/run_tests.py
-  # or
-  python tests/manage.py test -v 3
 
 
 If you have `tox`_ installed you can simply call tox inside the root directory

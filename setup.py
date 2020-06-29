@@ -24,21 +24,18 @@ def read(*rnames):
 
 setup(
     name='djangosaml2',
-    version='0.19.1',
+    version='0.20.0',
     description='pysaml2 integration for Django',
     long_description=read('README.rst'),
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Environment :: Web Environment",
         "Framework :: Django",
-        "Framework :: Django :: 2.2",
         "Framework :: Django :: 3.0",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
         "Programming Language :: Python",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.5",
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
@@ -59,11 +56,11 @@ setup(
     zip_safe=False,
     install_requires=[
         'defusedxml>=0.4.1',
-        'Django>=2.2',
-        'pysaml2>=5.0.0',
+        'Django>=2.2,<4',
+        'pysaml2>=5.3.0',
         ],
     tests_require=[
         # Provides assert_called_once.
-        'mock;python_version < "3.6"',
+        'mock',
     ]
     )

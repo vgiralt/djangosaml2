@@ -1,8 +1,9 @@
 Changes
 =======
 
-0.19.2 (not released)
+0.20.0 (2020-06-29)
 - Bugfix: Always save newly created users when ATTRIBUTE_MAPPING is missing in the config
+- pySAML2 v5.3.0
 
 0.19.1 (2020-06-15)
 ------------------
