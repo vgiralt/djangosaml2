@@ -548,7 +548,7 @@ You can also run the unit tests as follows::
   
   python tests/run_tests.py
 
-or
+or::
   
   cd tests/
   ./manage.py test djangosaml2
@@ -563,10 +563,12 @@ and it will run the tests in multiple versions of Python.
 Code Coverage
 =============
 
+example::
+
   cd tests/
   coverage erase
   coverage run ./manage.py test djangosaml2
-  coverage report
+  coverage report -m
 
 
 FAQ
