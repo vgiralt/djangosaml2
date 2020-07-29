@@ -548,11 +548,26 @@ You can also run the unit tests as follows::
   
   python tests/run_tests.py
 
+or
+  
+  cd tests/
+  ./manage.py test djangosaml2
+
 
 If you have `tox`_ installed you can simply call tox inside the root directory
 and it will run the tests in multiple versions of Python.
 
 .. _`tox`: http://pypi.python.org/pypi/tox
+
+
+Code Coverage
+=============
+
+  cd tests/
+  coverage erase
+  coverage run ./manage.py test djangosaml2
+  coverage report
+
 
 FAQ
 ===

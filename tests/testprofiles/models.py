@@ -23,6 +23,9 @@ class TestUser(AbstractUser):
     def process_first_name(self, first_name):
         self.first_name = first_name[0]
 
+    class Meta:
+        app_label = 'testprofiles'
+
 
 class StandaloneUserModel(models.Model):
     """
