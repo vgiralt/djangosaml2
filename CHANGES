@@ -1,7 +1,13 @@
 Changes
 =======
 
+0.30.0 (2020-07-30)
+-------------------
+- SameSite cookie handled in a separate context (request.saml_session)
+- local logout happens even if SAML2 SLO have troubles
+
 0.20.0 (2020-06-29)
+-------------------
 - Bugfix: Always save newly created users when ATTRIBUTE_MAPPING is missing in the config
 - pySAML2 v5.3.0
 
