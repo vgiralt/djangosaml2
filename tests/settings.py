@@ -26,7 +26,7 @@ ALLOWED_HOSTS = []
 
 INSTALLED_APPS = (
     'testprofiles',
-    
+
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -45,6 +45,9 @@ MIDDLEWARE = (
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+
+    # SameSite Cookie handler
+    'djangosaml2.middleware.SamlSessionMiddleware'
 )
 
 ROOT_URLCONF = 'testprofiles.urls'

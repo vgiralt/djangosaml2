@@ -11,6 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import base64
+import re
+import urllib
+import zlib
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -95,3 +99,25 @@ def validate_referral_url(request, url):
         return settings.LOGIN_REDIRECT_URL
     else:
         return url
+
+
+def get_saml_request_session(request):
+    session_name = getattr(settings, 'SAML_SESSION_COOKIE_NAME', 'saml_session')
+    return getattr(request, session_name)
+
+
+def saml2_from_httpredirect_request(url):
+    urlquery = urllib.parse.urlparse(url).query
+    b64_inflated_saml2req = urllib.parse.parse_qs(urlquery)['SAMLRequest'][0]
+
+    inflated_saml2req = base64.b64decode(b64_inflated_saml2req)
+    deflated_saml2req = zlib.decompress(inflated_saml2req, -15)
+    return deflated_saml2req
+
+def get_session_id_from_saml2(saml2_xml):
+    saml2_xml = saml2_xml.encode() if isinstance(saml2_xml, str) else saml2_xml
+    return re.findall(b'ID="([a-z0-9\-]*)"', saml2_xml, re.I)[0].decode()
+
+def get_subject_id_from_saml2(saml2_xml):
+    saml2_xml = saml2_xml if isinstance(saml2_xml, str) else saml2_xml.decode()
+    re.findall('">([a-z0-9]+)</saml:NameID>', saml2_xml)[0]

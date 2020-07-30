@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import base64
 import datetime
 import re
@@ -24,19 +23,23 @@ from unittest import mock, skip
 from django.conf import settings
 from django.contrib.auth import SESSION_KEY, get_user_model
 from django.contrib.auth.models import AnonymousUser
-from django.contrib.sessions.middleware import SessionMiddleware
 from django.http.request import HttpRequest
 from django.template import Context, Template
-from django.test import TestCase
+from django.test import TestCase, Client
 from django.test.client import RequestFactory
 from djangosaml2 import views
 from djangosaml2.cache import OutstandingQueriesCache
 from djangosaml2.conf import get_config
+from djangosaml2.middleware import SamlSessionMiddleware
 from djangosaml2.signals import post_authenticated, pre_user_save
 from djangosaml2.tests import conf
 from djangosaml2.tests.utils import SAMLPostFormParser
 from djangosaml2.tests.auth_response import auth_response
 from djangosaml2.views import finish_logout
+from djangosaml2.utils import (saml2_from_httpredirect_request,
+                               get_session_id_from_saml2,
+                               get_subject_id_from_saml2)
+from importlib import import_module
 from saml2.config import SPConfig
 from saml2.s_utils import decode_base64_and_inflate, deflate_and_base64_encode
 
@@ -88,7 +91,7 @@ class SAML2Tests(TestCase):
                 xml_string)
 
             return xml_string
-        
+
         self.assertEqual(remove_variable_attributes(real_xml),
                          remove_variable_attributes(expected_xmls))
 
@@ -96,11 +99,17 @@ class SAML2Tests(TestCase):
         self.client.cookies[settings.SESSION_COOKIE_NAME] = 'testing'
 
     def add_outstanding_query(self, session_id, came_from):
-        session = self.client.session
-        oq_cache = OutstandingQueriesCache(session)
-        oq_cache.set(session_id, came_from)
-        session.save()
-        self.client.cookies[settings.SESSION_COOKIE_NAME] = session.session_key
+        settings.SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+        engine = import_module(settings.SESSION_ENGINE)
+        self.saml_session = engine.SessionStore()
+        self.saml_session.save()
+        self.oq_cache = OutstandingQueriesCache(self.saml_session)
+
+        self.oq_cache.set(session_id \
+                          if isinstance(session_id, str) else session_id.decode(),
+                          came_from)
+        self.saml_session.save()
+        self.client.cookies[settings.SESSION_COOKIE_NAME] = self.saml_session.session_key
 
     def render_template(self, text):
         return Template(text).render(Context())
@@ -129,7 +138,7 @@ class SAML2Tests(TestCase):
         response_parser = SAMLPostFormParser()
         response_parser.feed(response.content.decode('utf-8'))
         saml_request = response_parser.saml_request_value
-        
+
         self.assertIsNotNone(saml_request)
         if 'AuthnRequest xmlns' not in base64.b64decode(saml_request).decode('utf-8'):
             raise Exception('test_unsigned_post_authn_request: Not a valid AuthnRequest')
@@ -149,7 +158,7 @@ class SAML2Tests(TestCase):
         response = self.client.get(reverse('saml2_login') + '?next=http://evil.com')
         url = urlparse(response['Location'])
         params = parse_qs(url.query)
-        
+
         self.assertEqual(params['RelayState'], [settings.LOGIN_REDIRECT_URL, ])
 
     def test_login_one_idp(self):
@@ -171,18 +180,18 @@ class SAML2Tests(TestCase):
         params = parse_qs(url.query)
         self.assertIn('SAMLRequest', params)
         self.assertIn('RelayState', params)
-        
+
         saml_request = params['SAMLRequest'][0]
         if 'AuthnRequest xmlns' not in decode_base64_and_inflate(saml_request).decode('utf-8'):
             raise Exception('Not a valid AuthnRequest')
 
         # if we set a next arg in the login view, it is preserverd
         # in the RelayState argument
-        next = '/another-view/'
-        response = self.client.get(reverse('saml2_login'), {'next': next})
+        nexturl = '/another-view/'
+        response = self.client.get(reverse('saml2_login'), {'next': nexturl})
         self.assertEqual(response.status_code, 302)
         location = response['Location']
-        
+
         url = urlparse(location)
         self.assertEqual(url.hostname, 'idp.example.com')
         self.assertEqual(url.path, '/simplesaml/saml2/idp/SSOService.php')
@@ -190,7 +199,7 @@ class SAML2Tests(TestCase):
         params = parse_qs(url.query)
         self.assertIn('SAMLRequest', params)
         self.assertIn('RelayState', params)
-        self.assertEqual(params['RelayState'][0], next)
+        self.assertEqual(params['RelayState'][0], nexturl)
 
     def test_login_several_idps(self):
         settings.SAML_CONFIG = conf.create_conf(
@@ -236,15 +245,17 @@ class SAML2Tests(TestCase):
             idp_hosts=['idp.example.com'],
             metadata_file='remote_metadata_one_idp.xml',
         )
-
+        response = self.client.get(reverse('saml2_login'))
+        saml2_req = saml2_from_httpredirect_request(response.url)
+        session_id = get_session_id_from_saml2(saml2_req)
         # session_id should start with a letter since it is a NCName
-        session_id = "a0123456789abcdef0123456789abcdef"
         came_from = '/another-view/'
         self.add_outstanding_query(session_id, came_from)
 
         # this will create a user
         saml_response = auth_response(session_id, 'student')
-        response = self.client.post(reverse('saml2_acs'), {
+        _url = reverse('saml2_acs')
+        response = self.client.post(_url, {
                 'SAMLResponse': self.b64_for_post(saml_response),
                 'RelayState': came_from,
                 })
@@ -261,11 +272,16 @@ class SAML2Tests(TestCase):
         # let's create another user and log in with that one
         new_user = User.objects.create(username='teacher', password='not-used')
 
-        session_id = "a1111111111111111111111111111111"
+        #  session_id = "a1111111111111111111111111111111"
+        client = Client()
+        response = client.get(reverse('saml2_login'))
+        saml2_req = saml2_from_httpredirect_request(response.url)
+        session_id = get_session_id_from_saml2(saml2_req)
+
         came_from = ''  # bad, let's see if we can deal with this
         saml_response = auth_response(session_id, 'teacher')
         self.add_outstanding_query(session_id, '/')
-        response = self.client.post(reverse('saml2_acs'), {
+        response = client.post(reverse('saml2_acs'), {
                 'SAMLResponse': self.b64_for_post(saml_response),
                 'RelayState': came_from,
                 })
@@ -275,7 +291,7 @@ class SAML2Tests(TestCase):
         url = urlparse(location)
         # as the RelayState is empty we have redirect to LOGIN_REDIRECT_URL
         self.assertEqual(url.path, settings.LOGIN_REDIRECT_URL)
-        self.assertEqual(force_text(new_user.id), self.client.session[SESSION_KEY])
+        self.assertEqual(force_text(new_user.id), client.session[SESSION_KEY])
 
     def test_assertion_consumer_service_no_session(self):
         settings.SAML_CONFIG = conf.create_conf(
@@ -284,8 +300,11 @@ class SAML2Tests(TestCase):
             metadata_file='remote_metadata_one_idp.xml',
         )
 
+        response = self.client.get(reverse('saml2_login'))
+        saml2_req = saml2_from_httpredirect_request(response.url)
+        session_id = get_session_id_from_saml2(saml2_req)
         # session_id should start with a letter since it is a NCName
-        session_id = "a0123456789abcdef0123456789abcdef"
+
         came_from = '/another-view/'
         self.add_outstanding_query(session_id, came_from)
 
@@ -324,7 +343,10 @@ class SAML2Tests(TestCase):
         """Auxiliary method used in several tests (mainly logout tests)"""
         self.init_cookies()
 
-        session_id = "a0123456789abcdef0123456789abcdef"
+        response = self.client.get(reverse('saml2_login'))
+        saml2_req = saml2_from_httpredirect_request(response.url)
+        session_id = get_session_id_from_saml2(saml2_req)
+        # session_id should start with a letter since it is a NCName
         came_from = '/another-view/'
         self.add_outstanding_query(session_id, came_from)
 
@@ -335,7 +357,9 @@ class SAML2Tests(TestCase):
                 'SAMLResponse': self.b64_for_post(saml_response),
                 'RelayState': came_from,
                 })
+        subject_id = get_subject_id_from_saml2(saml_response)
         self.assertEqual(response.status_code, 302)
+        return subject_id
 
     @skip("This is a known issue caused by pysaml2. Needs more investigation. Fixes are welcome.")
     def test_logout(self):
@@ -359,12 +383,12 @@ class SAML2Tests(TestCase):
         self.assertIn('SAMLRequest', params)
 
         saml_request = params['SAMLRequest'][0]
-                                      
+
         if 'LogoutRequest xmlns' not in decode_base64_and_inflate(saml_request).decode('utf-8'):
             raise Exception('Not a valid LogoutRequest')
 
-        
-        
+
+
     def test_logout_service_local(self):
         settings.SAML_CONFIG = conf.create_conf(
             sp_host='sp.example.com',
@@ -413,13 +437,12 @@ class SAML2Tests(TestCase):
             metadata_file='remote_metadata_one_idp.xml',
         )
 
-        self.do_login()
-
+        subject_id = self.do_login()
         # now simulate a global logout process initiated by another SP
-        subject_id = views._get_subject_id(self.client.session)
+        subject_id = views._get_subject_id(self.saml_session)
         instant = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
         saml_request = """<?xml version='1.0' encoding='UTF-8'?>
-<samlp:LogoutRequest xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="_9961abbaae6d06d251226cb25e38bf8f468036e57e" Version="2.0" IssueInstant="%s" Destination="http://sp.example.com/saml2/ls/"><saml:Issuer>https://idp.example.com/simplesaml/saml2/idp/metadata.php</saml:Issuer><saml:NameID SPNameQualifier="http://sp.example.com/saml2/metadata/" Format="urn:oasis:names:tc:SAML:2.0:nameid-format:transient">%s</saml:NameID><samlp:SessionIndex>_1837687b7bc9faad85839dbeb319627889f3021757</samlp:SessionIndex></samlp:LogoutRequest>""" % (instant, subject_id.text)
+<samlp:LogoutRequest xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="_9961abbaae6d06d251226cb25e38bf8f468036e57e" Version="2.0" IssueInstant="%s" Destination="http://sp.example.com/saml2/ls/"><saml:Issuer>https://idp.example.com/simplesaml/saml2/idp/metadata.php</saml:Issuer><saml:NameID SPNameQualifier="http://sp.example.com/saml2/metadata/" Format="urn:oasis:names:tc:SAML:2.0:nameid-format:transient">%s</saml:NameID><samlp:SessionIndex>_1837687b7bc9faad85839dbeb319627889f3021757</samlp:SessionIndex></samlp:LogoutRequest>""" % (instant, subject_id)
 
         response = self.client.get(reverse('saml2_ls'), {
                 'SAMLRequest': deflate_and_base64_encode(saml_request),
@@ -435,7 +458,7 @@ class SAML2Tests(TestCase):
         params = parse_qs(url.query)
         self.assertIn('SAMLResponse', params)
         saml_response = params['SAMLResponse'][0]
-        
+
         if 'Response xmlns' not in decode_base64_and_inflate(saml_response).decode('utf-8'):
             raise Exception('Not a valid Response')
 
@@ -634,9 +657,12 @@ class ConfTests(TestCase):
         config_loader_path = 'djangosaml2.tests.test_config_loader_with_real_conf'
         request = RequestFactory().get('/login/')
         request.user = AnonymousUser()
-        middleware = SessionMiddleware()
+        middleware = SamlSessionMiddleware()
         middleware.process_request(request)
-        request.session.save()
+
+        saml_session_name = getattr(settings, 'SAML_SESSION_COOKIE_NAME', 'saml_session')
+        getattr(request, saml_session_name).save()
+
         response = views.login(request, config_loader_path)
         self.assertEqual(response.status_code, 302)
         location = response['Location']

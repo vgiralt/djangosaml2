@@ -68,7 +68,7 @@ do to make sure it is compatible with your Django version and environment.
   you run any other Django application test suite. Just type ``python manage.py
   test djangosaml2``.
 
-  Python 2 users need to ``pip install djangosaml2[test]`` in order to run the
+  Python users need to ``pip install djangosaml2[test]`` in order to run the
   tests.
 
 Then you have to add the ``djangosaml2.backends.Saml2Backend``
@@ -106,6 +106,10 @@ If you want to allow several authentication mechanisms in your project
 you should set the LOGIN_URL option to another view and put a link in such
 view to the ``/saml2/login/`` view.
 
+Add the SAML Session Middleware as follow::
+
+  MIDDLEWARE.append('djangosaml2.middleware.SamlSessionMiddleware')
+
 Handling Post-Login Redirects
 -----------------------------
 It is often desireable for the client to maintain the URL state (or at least manage it) so that
@@ -116,11 +120,11 @@ host matches the output of get_host().  However, in some cases it becomes desire
 hostnames to be used for the post-login redirect.  In such cases, the setting::
 
   SAML_ALLOWED_HOSTS = []
-  
-May be set to a list of allowed post-login redirect hostnames (note, the URL components beyond the hostname
-may be specified by the client - typically with the ?next= parameter.) 
 
-In the absence of a ?next= parameter, the LOGIN_REDIRECT_URL setting will be used (assuming the destination hostname 
+May be set to a list of allowed post-login redirect hostnames (note, the URL components beyond the hostname
+may be specified by the client - typically with the ?next= parameter.)
+
+In the absence of a ?next= parameter, the LOGIN_REDIRECT_URL setting will be used (assuming the destination hostname
 either matches the output of get_host() or is included in the SAML_ALLOWED_HOSTS setting)
 
 
@@ -205,11 +209,11 @@ We will see a typical configuration for protecting a Django project::
                 },
              # Mandates that the identity provider MUST authenticate the
              # presenter directly rather than rely on a previous security context.
-            'force_authn': False, 
-            
+            'force_authn': False,
+
              # Enable AllowCreate in NameIDPolicy.
             'name_id_format_allow_create': False,
-            
+
              # attributes that this project need to identify a user
             'required_attributes': ['uid'],
 
@@ -326,6 +330,15 @@ setting::
 
   SAML_CONFIG_LOADER = 'python.path.to.your.callable'
 
+
+SameSite cookie
+...............
+
+By default, djangosaml2 handle the saml2 session in a separate cookie.
+The storage linked to it is accessible by default at `request.saml_session`.
+You can even configure this using::
+
+  SAML_SESSION_COOKIE_NAME = 'saml_session'
 
 Custom error handler
 ....................
@@ -544,12 +557,16 @@ Unit tests
 You can also run the unit tests as follows::
 
   pip install -r requirements-dev.txt
+  # or
+  pip install djangosaml2[test]
   python3 tests/manage.py migrate
-  
+
+then::
+
   python tests/run_tests.py
 
 or::
-  
+
   cd tests/
   ./manage.py test djangosaml2
 
