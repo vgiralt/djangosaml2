@@ -53,7 +53,7 @@ from .overrides import Saml2Client
 from .signals import post_authenticated
 from .utils import (available_idps, fail_acs_response, get_custom_setting,
                     get_idp_sso_supported_bindings, get_location,
-                    validate_referral_url, get_saml_request_session)
+                    validate_referral_url)
 
 try:
     from django.contrib.auth.views import LogoutView
@@ -246,9 +246,8 @@ def login(request,
     else:
         raise UnsupportedBinding('Unsupported binding: %s', binding)
 
-    saml_session = get_saml_request_session(request)
     # success, so save the session ID and return our response
-    oq_cache = OutstandingQueriesCache(saml_session)
+    oq_cache = OutstandingQueriesCache(request.saml_session)
     oq_cache.set(session_id, came_from)
     logger.debug('Saving the session_id "{}" in the OutstandingQueries cache'.format(oq_cache.__dict__))
     return http_response
@@ -290,9 +289,8 @@ class AssertionConsumerServiceView(View):
             logger.warning('Missing "SAMLResponse" parameter in POST data.')
             raise SuspiciousOperation
 
-        saml_session = get_saml_request_session(request)
-        client = Saml2Client(conf, identity_cache=IdentityCache(saml_session))
-        oq_cache = OutstandingQueriesCache(saml_session)
+        client = Saml2Client(conf, identity_cache=IdentityCache(request.saml_session))
+        oq_cache = OutstandingQueriesCache(request.saml_session)
         oq_cache.sync()
         outstanding_queries = oq_cache.outstanding_queries()
 
@@ -321,8 +319,8 @@ class AssertionConsumerServiceView(View):
             logger.warning("Missing Authentication Context from IdP.", exc_info=True)
             return fail_acs_response(request, exception=e)
         except MissingKey as e:
-            logger.exception("SAML Identity Provider is not configured "
-                             "correctly: certificate key is missing!")
+            logger.exception("SAML Identity Provider is not configured correctly: "
+                             "certificate key is missing!")
             return fail_acs_response(request, exception=e)
         except UnsolicitedResponse as e:
             logger.exception("Received SAMLResponse when no request has been made.")
@@ -354,7 +352,7 @@ class AssertionConsumerServiceView(View):
             return fail_acs_response(request, exception=PermissionDenied('No user could be authenticated.'))
 
         auth.login(self.request, user)
-        _set_subject_id(saml_session, session_info['name_id'])
+        _set_subject_id(request.saml_session, session_info['name_id'])
         logger.debug("User %s authenticated via SSO.", user)
         logger.debug('Sending the post_authenticated signal')
 
@@ -414,13 +412,12 @@ def echo_attributes(request,
                     config_loader_path=None,
                     template='djangosaml2/echo_attributes.html'):
     """Example view that echo the SAML attributes of an user"""
-    saml_session = get_saml_request_session(request)
-    state = StateCache(saml_session)
+    state = StateCache(request.saml_session)
     conf = get_config(config_loader_path, request)
 
     client = Saml2Client(conf, state_cache=state,
-                         identity_cache=IdentityCache(saml_session))
-    subject_id = _get_subject_id(saml_session)
+                         identity_cache=IdentityCache(request.saml_session))
+    subject_id = _get_subject_id(request.saml_session)
     try:
         identity = client.users.get_identity(subject_id,
                                              check_not_on_or_after=False)
@@ -437,13 +434,12 @@ def logout(request, config_loader_path=None):
     This view initiates the SAML2 Logout request
     using the pysaml2 library to create the LogoutRequest.
     """
-    saml_session = get_saml_request_session(request)
-    state = StateCache(saml_session)
+    state = StateCache(request.saml_session)
     conf = get_config(config_loader_path, request)
 
     client = Saml2Client(conf, state_cache=state,
-                         identity_cache=IdentityCache(saml_session))
-    subject_id = _get_subject_id(saml_session)
+                         identity_cache=IdentityCache(request.saml_session))
+    subject_id = _get_subject_id(request.saml_session)
     if subject_id is None:
         logger.warning(
             'The session does not contain the subject id for user %s',
@@ -510,10 +506,9 @@ def do_logout_service(request, data, binding, config_loader_path=None, next_page
     logger.debug('Logout service started')
     conf = get_config(config_loader_path, request)
 
-    saml_session = get_saml_request_session(request)
-    state = StateCache(saml_session)
+    state = StateCache(request.saml_session)
     client = Saml2Client(conf, state_cache=state,
-                         identity_cache=IdentityCache(saml_session))
+                         identity_cache=IdentityCache(request.saml_session))
 
     if 'SAMLResponse' in data:  # we started the logout
         logger.debug('Receiving a logout response from the IdP')
@@ -523,7 +518,7 @@ def do_logout_service(request, data, binding, config_loader_path=None, next_page
 
     elif 'SAMLRequest' in data:  # logout started by the IdP
         logger.debug('Receiving a logout request from the IdP')
-        subject_id = _get_subject_id(saml_session)
+        subject_id = _get_subject_id(request.saml_session)
 
         if subject_id is None:
             logger.warning(

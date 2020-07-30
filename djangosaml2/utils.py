@@ -101,11 +101,6 @@ def validate_referral_url(request, url):
         return url
 
 
-def get_saml_request_session(request):
-    session_name = getattr(settings, 'SAML_SESSION_COOKIE_NAME', 'saml_session')
-    return getattr(request, session_name)
-
-
 def saml2_from_httpredirect_request(url):
     urlquery = urllib.parse.urlparse(url).query
     b64_inflated_saml2req = urllib.parse.parse_qs(urlquery)['SAMLRequest'][0]

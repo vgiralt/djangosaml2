@@ -62,7 +62,7 @@ any data model. The only reason we include it is to be able to run
 djangosaml2 test suite from our project, something you should always
 do to make sure it is compatible with your Django version and environment.
 
-.. note::
+.. Note::
 
   When you finish the configuration you can run the djangosaml2 test suite as
   you run any other Django application test suite. Just type ``python manage.py
@@ -96,7 +96,7 @@ been authenticated before. We are also telling that when the user closes
 his browser, the session should be terminated. This is useful in SAML2
 federations where the logout protocol is not always available.
 
-.. note::
+.. Note::
 
   The login url starts with ``/saml2/`` as an example but you can change that
   if you want. Check the section about changes in the ``urls.py``
@@ -240,22 +240,28 @@ We will see a typical configuration for protecting a Django project::
             },
         },
 
-    # where the remote metadata is stored
+    # where the remote metadata is stored, local, remote or mdq server.
+    # One metadatastore or many ...
     'metadata': {
         'local': [path.join(BASEDIR, 'remote_metadata.xml')],
+        'remote': [{"url": "https://idp.testunical.it/idp/shibboleth",
+                    "disable_ssl_certificate_validation": True},],
+        'mdq': [{"url": "https://ds.testunical.it",
+                 "cert": "certficates/others/ds.testunical.it.cert",
+                 "disable_ssl_certificate_validation": True}]
         },
 
     # set to 1 to output debugging information
     'debug': 1,
 
     # Signing
-    'key_file': path.join(BASEDIR, 'mycert.key'),  # private part
-    'cert_file': path.join(BASEDIR, 'mycert.pem'),  # public part
+    'key_file': path.join(BASEDIR, 'private.key'),  # private part
+    'cert_file': path.join(BASEDIR, 'public.pem'),  # public part
 
     # Encryption
     'encryption_keypairs': [{
-        'key_file': path.join(BASEDIR, 'my_encryption_key.key'),  # private part
-        'cert_file': path.join(BASEDIR, 'my_encryption_cert.pem'),  # public part
+        'key_file': path.join(BASEDIR, 'private.key'),  # private part
+        'cert_file': path.join(BASEDIR, 'public.pem'),  # public part
     }],
 
     # own metadata settings
@@ -277,7 +283,6 @@ We will see a typical configuration for protecting a Django project::
         'display_name': [('Yaco', 'es'), ('Yaco', 'en')],
         'url': [('http://www.yaco.es', 'es'), ('http://www.yaco.com', 'en')],
         },
-    'valid_for': 24,  # how long is our metadata valid
     }
 
 .. note::
@@ -309,11 +314,13 @@ standard x509 certificate. You need it to sign your metadata. For assertion
 encryption/decryption support please configure another set of ``key_file`` and
 ``cert_file``, but as inner attributes of ``encryption_keypairs`` option.
 
-.. note::
+.. Note::
 
   Check your openssl documentation to generate a test certificate but don't
   forget to order a real one when you go into production.
 
+..
+  openssl req -nodes -new -x509 -days 3650 -keyout private.key -out public.cert
 
 Custom and dynamic configuration loading
 ........................................
@@ -336,7 +343,7 @@ SameSite cookie
 
 By default, djangosaml2 handle the saml2 session in a separate cookie.
 The storage linked to it is accessible by default at `request.saml_session`.
-You can even configure this using::
+You can even configure the SAML cookie name as follows::
 
   SAML_SESSION_COOKIE_NAME = 'saml_session'
 
