@@ -63,6 +63,9 @@ class OutstandingQueriesCache(object):
             del self._db[saml2_session_id]
             self._db.sync()
 
+    def sync(self):
+        self._db.sync()
+
 
 class IdentityCache(Cache):
     """Handles information about the users that have been succesfully

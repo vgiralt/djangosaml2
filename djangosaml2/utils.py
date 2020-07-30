@@ -95,3 +95,7 @@ def validate_referral_url(request, url):
         return settings.LOGIN_REDIRECT_URL
     else:
         return url
+
+def get_saml_request_session(request):
+    session_name = getattr(settings, 'SAML_SESSION_COOKIE_NAME', 'saml_session')
+    return getattr(request, session_name)

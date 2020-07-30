@@ -88,7 +88,7 @@ class SAML2Tests(TestCase):
                 xml_string)
 
             return xml_string
-        
+
         self.assertEqual(remove_variable_attributes(real_xml),
                          remove_variable_attributes(expected_xmls))
 
@@ -129,7 +129,7 @@ class SAML2Tests(TestCase):
         response_parser = SAMLPostFormParser()
         response_parser.feed(response.content.decode('utf-8'))
         saml_request = response_parser.saml_request_value
-        
+
         self.assertIsNotNone(saml_request)
         if 'AuthnRequest xmlns' not in base64.b64decode(saml_request).decode('utf-8'):
             raise Exception('test_unsigned_post_authn_request: Not a valid AuthnRequest')
@@ -149,7 +149,7 @@ class SAML2Tests(TestCase):
         response = self.client.get(reverse('saml2_login') + '?next=http://evil.com')
         url = urlparse(response['Location'])
         params = parse_qs(url.query)
-        
+
         self.assertEqual(params['RelayState'], [settings.LOGIN_REDIRECT_URL, ])
 
     def test_login_one_idp(self):
@@ -171,7 +171,7 @@ class SAML2Tests(TestCase):
         params = parse_qs(url.query)
         self.assertIn('SAMLRequest', params)
         self.assertIn('RelayState', params)
-        
+
         saml_request = params['SAMLRequest'][0]
         if 'AuthnRequest xmlns' not in decode_base64_and_inflate(saml_request).decode('utf-8'):
             raise Exception('Not a valid AuthnRequest')
@@ -182,7 +182,7 @@ class SAML2Tests(TestCase):
         response = self.client.get(reverse('saml2_login'), {'next': next})
         self.assertEqual(response.status_code, 302)
         location = response['Location']
-        
+
         url = urlparse(location)
         self.assertEqual(url.hostname, 'idp.example.com')
         self.assertEqual(url.path, '/simplesaml/saml2/idp/SSOService.php')
@@ -359,12 +359,12 @@ class SAML2Tests(TestCase):
         self.assertIn('SAMLRequest', params)
 
         saml_request = params['SAMLRequest'][0]
-                                      
+
         if 'LogoutRequest xmlns' not in decode_base64_and_inflate(saml_request).decode('utf-8'):
             raise Exception('Not a valid LogoutRequest')
 
-        
-        
+
+
     def test_logout_service_local(self):
         settings.SAML_CONFIG = conf.create_conf(
             sp_host='sp.example.com',
@@ -435,7 +435,7 @@ class SAML2Tests(TestCase):
         params = parse_qs(url.query)
         self.assertIn('SAMLResponse', params)
         saml_response = params['SAMLResponse'][0]
-        
+
         if 'Response xmlns' not in decode_base64_and_inflate(saml_response).decode('utf-8'):
             raise Exception('Not a valid Response')
 
@@ -636,7 +636,10 @@ class ConfTests(TestCase):
         request.user = AnonymousUser()
         middleware = SessionMiddleware()
         middleware.process_request(request)
-        request.session.save()
+
+        saml_session_name = getattr(settings, 'SAML_SESSION_COOKIE_NAME', 'saml_session')
+        getattr(request, saml_session_name).save()
+
         response = views.login(request, config_loader_path)
         self.assertEqual(response.status_code, 302)
         location = response['Location']
