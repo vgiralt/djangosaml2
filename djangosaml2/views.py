@@ -407,6 +407,7 @@ def echo_attributes(request,
     """Example view that echo the SAML attributes of an user"""
     saml_session = get_saml_request_session(request)
     state = StateCache(saml_session)
+    state.sync()
     conf = get_config(config_loader_path, request)
 
     client = Saml2Client(conf, state_cache=state,
@@ -428,12 +429,15 @@ def logout(request, config_loader_path=None):
     This view initiates the SAML2 Logout request
     using the pysaml2 library to create the LogoutRequest.
     """
+    _do_local_logout(request)
+
     saml_session = get_saml_request_session(request)
     state = StateCache(saml_session)
-    conf = get_config(config_loader_path, request)
 
+    conf = get_config(config_loader_path, request)
     client = Saml2Client(conf, state_cache=state,
                          identity_cache=IdentityCache(saml_session))
+
     subject_id = _get_subject_id(saml_session)
     if subject_id is None:
         logger.warning(
@@ -450,8 +454,6 @@ def logout(request, config_loader_path=None):
         state.sync()
         return HttpResponseRedirect(settings.LOGOUT_REDIRECT_URL)
 
-    # user locally logged out for prudence, indipendently by IdP behaviour
-    _do_local_logout(request)
     state.sync()
 
     if not result:
@@ -499,7 +501,7 @@ def _do_local_logout(request):
 
 
 def do_logout_service(request, data, binding, config_loader_path=None, next_page=None,
-                   logout_error_template='djangosaml2/logout_error.html'):
+                      logout_error_template='djangosaml2/logout_error.html'):
     """SAML Logout Response endpoint
 
     The IdP will send the logout response to this view,
@@ -517,10 +519,11 @@ def do_logout_service(request, data, binding, config_loader_path=None, next_page
     client = Saml2Client(conf, state_cache=state,
                          identity_cache=IdentityCache(saml_session))
 
+    state.sync()
+
     if 'SAMLResponse' in data:  # we started the logout
         logger.debug('Receiving a logout response from the IdP')
         response = client.parse_logout_request_response(data['SAMLResponse'], binding)
-        state.sync()
         return finish_logout(request, response, next_page=next_page)
 
     elif 'SAMLRequest' in data:  # logout started by the IdP
@@ -539,7 +542,6 @@ def do_logout_service(request, data, binding, config_loader_path=None, next_page
                 subject_id,
                 binding,
                 relay_state=data.get('RelayState', ''))
-            state.sync()
 
             # logout
             _do_local_logout(request)
