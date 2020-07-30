@@ -436,21 +436,24 @@ def logout(request, config_loader_path=None):
             'The session does not contain the subject id for user %s',
             request.user)
 
+    result = dict()
     try:
         result = client.global_logout(subject_id)
     except LogoutError as exp:
         logger.exception('Error Handled - SLO not supported by IDP: {}'.format(exp))
-        auth.logout(request)
+        # logout
+        _do_local_logout(request)
         state.sync()
-        return HttpResponseRedirect('/')
+        return HttpResponseRedirect(settings.LOGOUT_REDIRECT_URL)
 
+    # user locally logged out for prudence, indipendently by IdP behaviour
+    _do_local_logout(request)
     state.sync()
 
     if not result:
         logger.error("Looks like the user %s is not logged in any IdP/AA", subject_id)
         return HttpResponseBadRequest("You are not logged in any IdP/AA")
-
-    if len(result) > 1:
+    elif len(result) > 1:
         logger.error('Sorry, I do not know how to logout from several sources. I will logout just from the first one')
 
     for entityid, logout_info in result.items():
@@ -470,7 +473,7 @@ def logout(request, config_loader_path=None):
             # We must have had a soap logout
             return finish_logout(request, logout_info)
 
-    logger.error('Could not logout because there only the HTTP_REDIRECT is supported')
+    logger.error('Could not logout because Logout Binding is not supported')
     return HttpResponseServerError('Logout Binding not supported')
 
 
@@ -480,7 +483,15 @@ def logout_service(request, *args, **kwargs):
 
 @csrf_exempt
 def logout_service_post(request, *args, **kwargs):
-    return do_logout_service(request, request.POST, BINDING_HTTP_POST, *args, **kwargs)
+    try:
+        return do_logout_service(request, request.POST, BINDING_HTTP_POST, *args, **kwargs)
+    except Exception as e:
+        logging.error('Logout Service Post: {}'.format(e))
+
+
+def _do_local_logout(request):
+    if request.user.is_authenticated:
+        auth.logout(request)
 
 
 def do_logout_service(request, data, binding, config_loader_path=None, next_page=None,
@@ -509,12 +520,13 @@ def do_logout_service(request, data, binding, config_loader_path=None, next_page
 
     elif 'SAMLRequest' in data:  # logout started by the IdP
         logger.debug('Receiving a logout request from the IdP')
-        subject_id = _get_subject_id(request.session)
+        subject_id = _get_subject_id(request.session) if hasattr(request, 'session') else None
+
         if subject_id is None:
             logger.warning(
                 'The session does not contain the subject id for user %s. Performing local logout',
                 request.user)
-            auth.logout(request)
+            _do_local_logout(request)
             return render(request, logout_error_template, status=403)
         else:
             http_info = client.handle_logout_request(
@@ -523,7 +535,10 @@ def do_logout_service(request, data, binding, config_loader_path=None, next_page
                 binding,
                 relay_state=data.get('RelayState', ''))
             state.sync()
-            auth.logout(request)
+
+            # logout
+            _do_local_logout(request)
+
             if (
                 http_info.get('method', 'GET') == 'POST' and
                 'data' in http_info and
