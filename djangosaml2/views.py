@@ -331,6 +331,7 @@ class AssertionConsumerServiceView(View):
             return fail_acs_response(request, status=400,
                                      exception=SuspiciousOperation('Unknown SAML2 error'))
 
+        # once acquired by ACS the session_id must be deleted
         session_id = response.session_id()
         oq_cache.delete(session_id)
 
@@ -434,12 +435,16 @@ def logout(request, config_loader_path=None):
     This view initiates the SAML2 Logout request
     using the pysaml2 library to create the LogoutRequest.
     """
+    auth.logout(request)
+
     state = StateCache(request.saml_session)
     conf = get_config(config_loader_path, request)
 
     client = Saml2Client(conf, state_cache=state,
                          identity_cache=IdentityCache(request.saml_session))
     subject_id = _get_subject_id(request.saml_session)
+
+
     if subject_id is None:
         logger.warning(
             'The session does not contain the subject id for user %s',
@@ -449,10 +454,9 @@ def logout(request, config_loader_path=None):
         result = client.global_logout(subject_id)
     except LogoutError as exp:
         logger.exception('Error Handled - SLO not supported by IDP: {}'.format(exp))
-        auth.logout(request)
-        state.sync()
         return HttpResponseRedirect(settings.LOGOUT_REDIRECT_URL)
 
+    # session_id must be deleted
     state.sync()
 
     if not result:
@@ -492,6 +496,11 @@ def logout_service_post(request, *args, **kwargs):
     return do_logout_service(request, request.POST, BINDING_HTTP_POST, *args, **kwargs)
 
 
+def _local_logout(request):
+    if request.user.is_authenticated:
+        auth.logout(request)
+
+
 def do_logout_service(request, data, binding, config_loader_path=None, next_page=None,
                    logout_error_template='djangosaml2/logout_error.html'):
     """SAML Logout Response endpoint
@@ -524,7 +533,7 @@ def do_logout_service(request, data, binding, config_loader_path=None, next_page
             logger.warning(
                 'The session does not contain the subject id for user %s. Performing local logout',
                 request.user)
-            auth.logout(request)
+            _local_logout(request)
             return render(request, logout_error_template, status=403)
         else:
             http_info = client.handle_logout_request(
@@ -533,7 +542,7 @@ def do_logout_service(request, data, binding, config_loader_path=None, next_page
                 binding,
                 relay_state=data.get('RelayState', ''))
             state.sync()
-            auth.logout(request)
+            _local_logout(request)
             if (
                 http_info.get('method', 'GET') == 'POST' and
                 'data' in http_info and
