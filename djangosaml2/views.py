@@ -294,39 +294,43 @@ class AssertionConsumerServiceView(View):
         oq_cache.sync()
         outstanding_queries = oq_cache.outstanding_queries()
 
+        _exception = None
         try:
             response = client.parse_authn_request_response(xmlstr,
                                                            BINDING_HTTP_POST,
                                                            outstanding_queries)
         except (StatusError, ToEarly) as e:
+            _exception = e
             logger.exception("Error processing SAML Assertion.")
-            return fail_acs_response(request, exception=e)
         except ResponseLifetimeExceed as e:
+            _exception = e
             logger.info(("SAML Assertion is no longer valid. "
                          "Possibly caused by network delay or replay attack."),
                          exc_info=True)
-            return fail_acs_response(request, exception=e)
         except SignatureError as e:
+            _exception = e
             logger.info("Invalid or malformed SAML Assertion.", exc_info=True)
-            return fail_acs_response(request, exception=e)
         except StatusAuthnFailed as e:
+            _exception = e
             logger.info("Authentication denied for user by IdP.", exc_info=True)
-            return fail_acs_response(request, exception=e)
         except StatusRequestDenied as e:
+            _exception = e
             logger.warning("Authentication interrupted at IdP.", exc_info=True)
-            return fail_acs_response(request, exception=e)
         except StatusNoAuthnContext as e:
+            _exception = e
             logger.warning("Missing Authentication Context from IdP.", exc_info=True)
-            return fail_acs_response(request, exception=e)
         except MissingKey as e:
+            _exception = e
             logger.exception("SAML Identity Provider is not configured correctly: "
                              "certificate key is missing!")
-            return fail_acs_response(request, exception=e)
         except UnsolicitedResponse as e:
+            _exception = e
             logger.exception("Received SAMLResponse when no request has been made.")
-            return fail_acs_response(request, exception=e)
 
-        if response is None:
+
+        if _exception:
+            return fail_acs_response(request, exception=_exception)
+        elif response is None:
             logger.warning("Invalid SAML Assertion received (unknown error).")
             return fail_acs_response(request, status=400,
                                      exception=SuspiciousOperation('Unknown SAML2 error'))

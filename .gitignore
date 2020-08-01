@@ -16,3 +16,4 @@ tags
 build/
 dist/
 *__pycache__*
+*.coverage
