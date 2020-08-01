@@ -110,14 +110,13 @@ class Saml2Backend(ModelBackend):
             logger.error('"ava" key not found in session_info')
             return None
 
-        attributes = self.clean_attributes(session_info['ava'])
-        if not attributes:
-            logger.error('The (cleaned) attributes dictionary is empty')
-            return None
+        idp_entityid = session_info['issuer']
+
+        attributes = self.clean_attributes(session_info['ava'], idp_entityid)
         
         logger.debug('attributes: %s', attributes)
 
-        if not self.is_authorized(attributes, attribute_mapping):
+        if not self.is_authorized(attributes, attribute_mapping, idp_entityid):
             logger.error('Request not authorized')
             return None
 
@@ -128,7 +127,7 @@ class Saml2Backend(ModelBackend):
 
         user, created = self.get_or_create_user(
             user_lookup_key, user_lookup_value, create_unknown_user,
-            idp_entityid=session_info['issuer'], attributes=attributes, attribute_mapping=attribute_mapping, request=request
+            idp_entityid=idp_entityid, attributes=attributes, attribute_mapping=attribute_mapping, request=request
         )
 
         # Update user with new attributes from incoming request
@@ -184,11 +183,11 @@ class Saml2Backend(ModelBackend):
     # Hooks to override by end-users in subclasses
     # ############################################
 
-    def clean_attributes(self, attributes: dict) -> dict:
+    def clean_attributes(self, attributes: dict, idp_entityid: str, **kwargs) -> dict:
         """ Hook to clean or filter attributes from the SAML response. No-op by default. """
         return attributes
 
-    def is_authorized(self, attributes: dict, attribute_mapping: dict) -> bool:
+    def is_authorized(self, attributes: dict, attribute_mapping: dict, idp_entityid: str, **kwargs) -> bool:
         """ Hook to allow custom authorization policies based on SAML attributes. True by default. """
         return True
 
