@@ -457,6 +457,7 @@ def logout(request, config_loader_path=None):
         state.sync()
         return HttpResponseRedirect(settings.LOGOUT_REDIRECT_URL)
 
+    auth.logout(request)
     state.sync()
 
     if not result:
