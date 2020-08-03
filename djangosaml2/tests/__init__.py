@@ -636,6 +636,12 @@ def test_config_loader(request):
     return config
 
 
+def test_config_loader_callable(request):
+    config = SPConfig()
+    config.load({'entityid': 'testentity_callable'})
+    return config
+
+
 def test_config_loader_with_real_conf(request):
     config = SPConfig()
     config.load(conf.create_conf(sp_host='sp.example.com',
@@ -652,6 +658,13 @@ class ConfTests(TestCase):
         conf = get_config(config_loader_path, request)
 
         self.assertEqual(conf.entityid, 'testentity')
+
+    def test_custom_conf_loader_callable(self):
+        config_loader_path = test_config_loader_callable
+        request = RequestFactory().get('/bar/foo')
+        conf = get_config(config_loader_path, request)
+
+        self.assertEqual(conf.entityid, 'testentity_callable')
 
     def test_custom_conf_loader_from_view(self):
         config_loader_path = 'djangosaml2.tests.test_config_loader_with_real_conf'
