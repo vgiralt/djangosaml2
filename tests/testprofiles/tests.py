@@ -23,7 +23,7 @@ from django.test import TestCase, override_settings
 
 from djangosaml2.backends import Saml2Backend, set_attribute
 
-from .models import TestUser
+from testprofiles.models import TestUser
 
 
 class BackendUtilMethodsTests(TestCase):

@@ -591,7 +591,7 @@ example::
 
   cd tests/
   coverage erase
-  coverage run ./manage.py test djangosaml2
+  coverage run ./manage.py test djangosaml2 testprofiles
   coverage report -m
 
 

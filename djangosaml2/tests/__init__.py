@@ -17,49 +17,63 @@ import base64
 import datetime
 import re
 import sys
-
+from importlib import import_module
 from unittest import mock, skip
+from urllib.parse import parse_qs, urlparse
 
 from django.conf import settings
 from django.contrib.auth import SESSION_KEY, get_user_model
 from django.contrib.auth.models import AnonymousUser
+from django.core.exceptions import ImproperlyConfigured
 from django.http.request import HttpRequest
 from django.template import Context, Template
-from django.test import TestCase, Client
+from django.test import Client, TestCase
 from django.test.client import RequestFactory
+from django.urls import reverse
+from django.utils.encoding import force_text
 from djangosaml2 import views
 from djangosaml2.cache import OutstandingQueriesCache
 from djangosaml2.conf import get_config
 from djangosaml2.middleware import SamlSessionMiddleware
 from djangosaml2.signals import post_authenticated, pre_user_save
 from djangosaml2.tests import conf
-from djangosaml2.tests.utils import SAMLPostFormParser
 from djangosaml2.tests.auth_response import auth_response
-from djangosaml2.views import finish_logout
-from djangosaml2.utils import (saml2_from_httpredirect_request,
+from djangosaml2.tests.utils import SAMLPostFormParser
+from djangosaml2.utils import (get_idp_sso_supported_bindings,
                                get_session_id_from_saml2,
-                               get_subject_id_from_saml2)
-from importlib import import_module
+                               get_subject_id_from_saml2,
+                               saml2_from_httpredirect_request)
+from djangosaml2.views import finish_logout
 from saml2.config import SPConfig
 from saml2.s_utils import decode_base64_and_inflate, deflate_and_base64_encode
-
-try:
-    from django.urls import reverse
-except ImportError:
-    from django.core.urlresolvers import reverse
-try:
-    from django.utils.encoding import force_text
-except ImportError:
-    from django.utils.text import force_text
-try:
-    from django.utils.six.moves.urllib.parse import urlparse, parse_qs
-except ImportError:
-    from urllib.parse import urlparse, parse_qs
-
 
 User = get_user_model()
 
 PY_VERSION = sys.version_info[:2]
+
+
+def dummy_loader(request):
+    return 'dummy_loader'
+
+
+non_callable = 'just a string'
+
+
+class UtilsTests(TestCase):
+    def test_get_config_valid_path(self):
+        self.assertEqual(get_config('djangosaml2.tests.dummy_loader'), 'dummy_loader')
+
+    def test_get_config_wrongly_formatted_path(self):
+        with self.assertRaisesMessage(ImproperlyConfigured, 'SAML config loader must be a callable object.'):
+            get_config('djangosaml2.tests.non_callable')
+
+    def test_get_config_nonsense_path(self):
+        with self.assertRaisesMessage(ImproperlyConfigured, 'Error importing SAML config loader lalala.nonexisting.blabla: "No module named \'lalala\'"'):
+            get_config('lalala.nonexisting.blabla')
+
+    def test_get_config_missing_function(self):
+        with self.assertRaisesMessage(ImproperlyConfigured, 'Module "djangosaml2.tests" does not define a "nonexisting_function" config loader'):
+            get_config('djangosaml2.tests.nonexisting_function')
 
 
 class SAML2Tests(TestCase):
@@ -117,6 +131,32 @@ class SAML2Tests(TestCase):
     def b64_for_post(self, xml_text, encoding='utf-8'):
         return base64.b64encode(xml_text.encode(encoding)).decode('ascii')
 
+    def test_get_idp_sso_supported_bindings_noargs(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_one_idp.xml',
+        )
+        idp_id = 'https://idp.example.com/simplesaml/saml2/idp/metadata.php'
+        self.assertEqual(list(get_idp_sso_supported_bindings())[0], list(settings.SAML_CONFIG['service']['sp']['idp'][idp_id]['single_sign_on_service'].keys())[0])
+
+    def test_get_idp_sso_supported_bindings_unknown_idp(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_one_idp.xml',
+        )
+        self.assertEqual(get_idp_sso_supported_bindings(idp_entity_id='random'), [])
+
+    def test_get_idp_sso_supported_bindings_no_idps(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=[],
+            metadata_file='remote_metadata_no_idp.xml',
+        )
+        with self.assertRaisesMessage(ImproperlyConfigured, "No IdP configured!"):
+            get_idp_sso_supported_bindings()
+
     def test_unsigned_post_authn_request(self):
         """
         Test that unsigned authentication requests via POST binding
@@ -156,6 +196,24 @@ class SAML2Tests(TestCase):
             metadata_file='remote_metadata_one_idp.xml',
         )
         response = self.client.get(reverse('saml2_login') + '?next=http://evil.com')
+        url = urlparse(response['Location'])
+        params = parse_qs(url.query)
+
+        self.assertEqual(params['RelayState'], [settings.LOGIN_REDIRECT_URL, ])
+
+    def test_no_redirect(self):
+        """
+        Make sure that if we give an empty path as the next parameter,
+        it is replaced with the default LOGIN_REDIRECT_URL.
+        """
+
+        # monkey patch SAML configuration
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_one_idp.xml',
+        )
+        response = self.client.get(reverse('saml2_login') + '?next=')
         url = urlparse(response['Location'])
         params = parse_qs(url.query)
 
@@ -236,7 +294,6 @@ class SAML2Tests(TestCase):
         if 'AuthnRequest xmlns' not in decode_base64_and_inflate(saml_request).decode('utf-8'):
             raise Exception('Not a valid AuthnRequest')
 
-
     def test_assertion_consumer_service(self):
         # Get initial number of users
         initial_user_count = User.objects.count()
@@ -292,6 +349,27 @@ class SAML2Tests(TestCase):
         # as the RelayState is empty we have redirect to LOGIN_REDIRECT_URL
         self.assertEqual(url.path, settings.LOGIN_REDIRECT_URL)
         self.assertEqual(force_text(new_user.id), client.session[SESSION_KEY])
+
+    def test_assertion_consumer_service_already_logged_in_allowed(self):
+        self.client.force_login(User.objects.create(username='user', password='pass'))
+
+        settings.SAML_IGNORE_AUTHENTICATED_USERS_ON_LOGIN = True
+
+        came_from = '/dummy-url/'
+        response = self.client.get(reverse('saml2_login') + f'?next={came_from}')
+        self.assertEqual(response.status_code, 302)
+        url = urlparse(response['Location'])
+        self.assertEqual(url.path, came_from)
+
+    def test_assertion_consumer_service_already_logged_in_error(self):
+        self.client.force_login(User.objects.create(username='user', password='pass'))
+
+        settings.SAML_IGNORE_AUTHENTICATED_USERS_ON_LOGIN = False
+
+        came_from = '/dummy-url/'
+        response = self.client.get(reverse('saml2_login') + f'?next={came_from}')
+        self.assertEqual(response.status_code, 200)
+        self.assertInHTML("<p>You are already logged in and you are trying to go to the login page again.</p>", response.content.decode())
 
     def test_assertion_consumer_service_no_session(self):
         settings.SAML_CONFIG = conf.create_conf(

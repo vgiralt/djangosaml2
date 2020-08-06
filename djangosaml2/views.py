@@ -19,6 +19,7 @@ import logging
 from django.conf import settings
 from django.contrib import auth
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.views import LogoutView
 from django.core.exceptions import PermissionDenied, SuspiciousOperation
 from django.http import HttpResponseBadRequest  # 40x
 from django.http import HttpResponseRedirect  # 30x
@@ -26,22 +27,20 @@ from django.http import HttpResponseServerError  # 50x
 from django.http import Http404, HttpResponse
 from django.shortcuts import render
 from django.template import TemplateDoesNotExist
+from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
-from django.utils.decorators import method_decorator
-
-from saml2 import BINDING_HTTP_REDIRECT, BINDING_HTTP_POST
+from saml2 import BINDING_HTTP_POST, BINDING_HTTP_REDIRECT
 from saml2.client_base import LogoutError
-from saml2.metadata import entity_descriptor
 from saml2.ident import code, decode
-from saml2.s_utils import UnsupportedBinding
-from saml2.response import (
-    StatusError, StatusAuthnFailed, SignatureError, StatusRequestDenied,
-    UnsolicitedResponse, StatusNoAuthnContext,
-)
 from saml2.mdstore import SourceNotFound
-from saml2.sigver import MissingKey
+from saml2.metadata import entity_descriptor
+from saml2.response import (SignatureError, StatusAuthnFailed, StatusError,
+                            StatusNoAuthnContext, StatusRequestDenied,
+                            UnsolicitedResponse)
+from saml2.s_utils import UnsupportedBinding
 from saml2.samlp import AuthnRequest
+from saml2.sigver import MissingKey
 from saml2.validate import ResponseLifetimeExceed, ToEarly
 from saml2.xmldsig import (  # support for SHA1 is required by spec
     SIG_RSA_SHA1, SIG_RSA_SHA256)
@@ -54,13 +53,6 @@ from .signals import post_authenticated
 from .utils import (available_idps, fail_acs_response, get_custom_setting,
                     get_idp_sso_supported_bindings, get_location,
                     validate_referral_url)
-
-try:
-    from django.contrib.auth.views import LogoutView
-    django_logout = LogoutView.as_view()
-except ImportError:
-    from django.contrib.auth.views import logout as django_logout
-
 
 logger = logging.getLogger('djangosaml2')
 
@@ -556,7 +548,7 @@ def finish_logout(request, response, next_page=None):
             next_page = settings.LOGOUT_REDIRECT_URL
         logger.debug('Performing django logout with a next_page of %s',
                      next_page)
-        return django_logout(request, next_page=next_page)
+        return LogoutView.as_view()(request, next_page=next_page)
     else:
         logger.error('Unknown error during the logout')
         return render(request, "djangosaml2/logout_error.html", {})
