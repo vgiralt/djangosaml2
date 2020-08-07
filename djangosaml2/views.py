@@ -23,25 +23,24 @@ from django.core.exceptions import PermissionDenied, SuspiciousOperation
 from django.http import HttpResponseBadRequest  # 40x
 from django.http import HttpResponseRedirect  # 30x
 from django.http import HttpResponseServerError  # 50x
-from django.http import Http404, HttpResponse
+from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.template import TemplateDoesNotExist
+from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
-from django.utils.decorators import method_decorator
-
-from saml2 import BINDING_HTTP_REDIRECT, BINDING_HTTP_POST
+from saml2 import BINDING_HTTP_POST, BINDING_HTTP_REDIRECT
 from saml2.client_base import LogoutError
-from saml2.metadata import entity_descriptor
+from saml2.config import SPConfig
 from saml2.ident import code, decode
-from saml2.s_utils import UnsupportedBinding
-from saml2.response import (
-    StatusError, StatusAuthnFailed, SignatureError, StatusRequestDenied,
-    UnsolicitedResponse, StatusNoAuthnContext,
-)
 from saml2.mdstore import SourceNotFound
-from saml2.sigver import MissingKey
+from saml2.metadata import entity_descriptor
+from saml2.response import (SignatureError, StatusAuthnFailed, StatusError,
+                            StatusNoAuthnContext, StatusRequestDenied,
+                            UnsolicitedResponse)
+from saml2.s_utils import UnsupportedBinding
 from saml2.samlp import AuthnRequest
+from saml2.sigver import MissingKey
 from saml2.validate import ResponseLifetimeExceed, ToEarly
 from saml2.xmldsig import (  # support for SHA1 is required by spec
     SIG_RSA_SHA1, SIG_RSA_SHA256)
@@ -76,11 +75,7 @@ def _get_subject_id(session):
         return None
 
 
-def login(request,
-          config_loader_path=None,
-          wayf_template='djangosaml2/wayf.html',
-          authorization_error_template='djangosaml2/auth_error.html',
-          post_binding_form_template='djangosaml2/post_binding_form.html'):
+class LoginView(View):
     """SAML Authorization Request initiator
 
     This view initiates the SAML2 Authorization handshake
@@ -96,163 +91,179 @@ def login(request,
     If set to None or nonexistent template, default form from the saml2 library
     will be rendered.
     """
-    logger.debug('Login process started')
 
-    came_from = request.GET.get('next', settings.LOGIN_REDIRECT_URL)
-    if not came_from:
-        logger.warning('The next parameter exists but is empty')
-        came_from = settings.LOGIN_REDIRECT_URL
-    came_from = validate_referral_url(request, came_from)
+    config_loader_path = None
+    wayf_template = 'djangosaml2/wayf.html'
+    authorization_error_template = 'djangosaml2/auth_error.html'
+    post_binding_form_template = 'djangosaml2/post_binding_form.html'
 
-    # if the user is already authenticated that maybe because of two reasons:
-    # A) He has this URL in two browser windows and in the other one he
-    #    has already initiated the authenticated session.
-    # B) He comes from a view that (incorrectly) send him here because
-    #    he does not have enough permissions. That view should have shown
-    #    an authorization error in the first place.
-    # We can only make one thing here and that is configurable with the
-    # SAML_IGNORE_AUTHENTICATED_USERS_ON_LOGIN setting. If that setting
-    # is True (default value) we will redirect him to the came_from view.
-    # Otherwise, we will show an (configurable) authorization error.
-    if request.user.is_authenticated:
-        redirect_authenticated_user = getattr(settings, 'SAML_IGNORE_AUTHENTICATED_USERS_ON_LOGIN', True)
-        if redirect_authenticated_user:
-            return HttpResponseRedirect(came_from)
-        else:
-            logger.debug('User is already logged in')
-            return render(request, authorization_error_template, {
+    def get_sp_config(self, request: HttpRequest) -> SPConfig:
+        return get_config(self.config_loader_path, request)
+
+    def get(self, request, *args, **kwargs):
+        logger.debug('Login process started')
+
+        came_from = request.GET.get('next', settings.LOGIN_REDIRECT_URL)
+        if not came_from:
+            logger.warning('The next parameter exists but is empty')
+            came_from = settings.LOGIN_REDIRECT_URL
+        came_from = validate_referral_url(request, came_from)
+
+        # if the user is already authenticated that maybe because of two reasons:
+        # A) He has this URL in two browser windows and in the other one he
+        #    has already initiated the authenticated session.
+        # B) He comes from a view that (incorrectly) send him here because
+        #    he does not have enough permissions. That view should have shown
+        #    an authorization error in the first place.
+        # We can only make one thing here and that is configurable with the
+        # SAML_IGNORE_AUTHENTICATED_USERS_ON_LOGIN setting. If that setting
+        # is True (default value) we will redirect him to the came_from view.
+        # Otherwise, we will show an (configurable) authorization error.
+        if request.user.is_authenticated:
+            redirect_authenticated_user = getattr(settings, 'SAML_IGNORE_AUTHENTICATED_USERS_ON_LOGIN', True)
+            if redirect_authenticated_user:
+                return HttpResponseRedirect(came_from)
+            else:
+                logger.debug('User is already logged in')
+                return render(request, self.authorization_error_template, {
+                        'came_from': came_from,
+                        })
+
+        selected_idp = request.GET.get('idp', None)
+        try:
+            conf = self.get_sp_config(request)
+        except SourceNotFound as excp:
+            msg = ('Error, IdP EntityID was not found in metadata: {}')
+            logger.exception(msg.format(excp))
+            return HttpResponse(msg.format('Please contact technical support.'), status=500)
+
+        kwargs = {}
+        # pysaml needs a string otherwise: "cannot serialize True (type bool)"
+        if getattr(conf, '_sp_force_authn', False):
+            kwargs['force_authn'] = "true"
+        if getattr(conf, '_sp_allow_create', False):
+            kwargs['allow_create'] = "true"
+
+        # is a embedded wayf needed?
+        idps = available_idps(conf)
+        if selected_idp is None and len(idps) > 1:
+            logger.debug('A discovery process is needed')
+            return render(request, self.wayf_template, {
+                    'available_idps': idps.items(),
                     'came_from': came_from,
                     })
-
-    selected_idp = request.GET.get('idp', None)
-    try:
-        conf = get_config(config_loader_path, request)
-    except SourceNotFound as excp:
-        msg = ('Error, IdP EntityID was not found '
-               'in metadata: {}')
-        logger.exception(msg.format(excp))
-        return HttpResponse(msg.format(('Please contact '
-                                        'technical support.')),
-                            status=500)
-
-    kwargs = {}
-    # pysaml needs a string otherwise: "cannot serialize True (type bool)"
-    if getattr(conf, '_sp_force_authn', False):
-        kwargs['force_authn'] = "true"
-    if getattr(conf, '_sp_allow_create', False):
-        kwargs['allow_create'] = "true"
-
-    # is a embedded wayf needed?
-    idps = available_idps(conf)
-    if selected_idp is None and len(idps) > 1:
-        logger.debug('A discovery process is needed')
-        return render(request, wayf_template, {
-                'available_idps': idps.items(),
-                'came_from': came_from,
-                })
-    else:
-        # is the first one, otherwise next logger message will print None
-        if not idps:
-            raise IdPConfigurationMissing(('IdP configuration is missing or '
-                                           'its metadata is expired.'))
-        if selected_idp is None:
-            selected_idp = list(idps.keys())[0]
-
-    # choose a binding to try first
-    sign_requests = getattr(conf, '_sp_authn_requests_signed', False)
-    binding = BINDING_HTTP_POST if sign_requests else BINDING_HTTP_REDIRECT
-    logger.debug('Trying binding %s for IDP %s', binding, selected_idp)
-
-    # ensure our selected binding is supported by the IDP
-    supported_bindings = get_idp_sso_supported_bindings(selected_idp, config=conf)
-    if binding not in supported_bindings:
-        logger.debug('Binding %s not in IDP %s supported bindings: %s',
-                     binding, selected_idp, supported_bindings)
-        if binding == BINDING_HTTP_POST:
-            logger.warning('IDP %s does not support %s,  trying %s',
-                           selected_idp, binding, BINDING_HTTP_REDIRECT)
-            binding = BINDING_HTTP_REDIRECT
         else:
-            logger.warning('IDP %s does not support %s,  trying %s',
-                           selected_idp, binding, BINDING_HTTP_POST)
-            binding = BINDING_HTTP_POST
-        # if switched binding still not supported, give up
+            # is the first one, otherwise next logger message will print None
+            if not idps:
+                raise IdPConfigurationMissing(('IdP configuration is missing or its metadata is expired.'))
+            if selected_idp is None:
+                selected_idp = list(idps.keys())[0]
+
+        # choose a binding to try first
+        sign_requests = getattr(conf, '_sp_authn_requests_signed', False)
+        binding = BINDING_HTTP_POST if sign_requests else BINDING_HTTP_REDIRECT
+        logger.debug('Trying binding %s for IDP %s', binding, selected_idp)
+
+        # ensure our selected binding is supported by the IDP
+        supported_bindings = get_idp_sso_supported_bindings(selected_idp, config=conf)
         if binding not in supported_bindings:
-            raise UnsupportedBinding('IDP %s does not support %s or %s',
-                                     selected_idp, BINDING_HTTP_POST, BINDING_HTTP_REDIRECT)
+            logger.debug('Binding %s not in IDP %s supported bindings: %s', binding, selected_idp, supported_bindings)
+            if binding == BINDING_HTTP_POST:
+                logger.warning('IDP %s does not support %s,  trying %s', selected_idp, binding, BINDING_HTTP_REDIRECT)
+                binding = BINDING_HTTP_REDIRECT
+            else:
+                logger.warning('IDP %s does not support %s,  trying %s', selected_idp, binding, BINDING_HTTP_POST)
+                binding = BINDING_HTTP_POST
+            # if switched binding still not supported, give up
+            if binding not in supported_bindings:
+                raise UnsupportedBinding('IDP %s does not support %s or %s', selected_idp, BINDING_HTTP_POST, BINDING_HTTP_REDIRECT)
 
-    client = Saml2Client(conf)
-    http_response = None
+        client = Saml2Client(conf)
+        http_response = None
 
-    logger.debug('Redirecting user to the IdP via %s binding.', binding)
-    if binding == BINDING_HTTP_REDIRECT:
-        try:
-            nsprefix = get_namespace_prefixes()
-            if sign_requests:
-                # do not sign the xml itself, instead use the sigalg to
-                # generate the signature as a URL param
-                sig_alg_option_map = {'sha1': SIG_RSA_SHA1,
-                                      'sha256': SIG_RSA_SHA256}
-                sig_alg_option = getattr(conf, '_sp_authn_requests_signed_alg', 'sha1')
-                kwargs["sigalg"] = sig_alg_option_map[sig_alg_option]
-            session_id, result = client.prepare_for_authenticate(
-                entityid=selected_idp, relay_state=came_from,
-                binding=binding, sign=False, nsprefix=nsprefix,
-                **kwargs)
-        except TypeError as e:
-            logger.error('Unable to know which IdP to use')
-            return HttpResponse(str(e))
-        else:
-            http_response = HttpResponseRedirect(get_location(result))
-    elif binding == BINDING_HTTP_POST:
-        if post_binding_form_template:
-            # get request XML to build our own html based on the template
+        logger.debug('Redirecting user to the IdP via %s binding.', binding)
+        if binding == BINDING_HTTP_REDIRECT:
             try:
-                location = client.sso_location(selected_idp, binding)
-            except TypeError as e:
-                logger.error('Unable to know which IdP to use')
-                return HttpResponse(str(e))
-            session_id, request_xml = client.create_authn_request(
-                location,
-                binding=binding,
-                **kwargs)
-            try:
-                if isinstance(request_xml, AuthnRequest):
-                    # request_xml will be an instance of AuthnRequest if the message is not signed
-                    request_xml = str(request_xml)
-                saml_request = base64.b64encode(bytes(request_xml, 'UTF-8')).decode('utf-8')
-
-                http_response = render(request, post_binding_form_template, {
-                    'target_url': location,
-                    'params': {
-                        'SAMLRequest': saml_request,
-                        'RelayState': came_from,
-                        },
-                    })
-            except TemplateDoesNotExist:
-                pass
-
-        if not http_response:
-            # use the html provided by pysaml2 if no template was specified or it didn't exist
-            try:
+                nsprefix = get_namespace_prefixes()
+                if sign_requests:
+                    # do not sign the xml itself, instead use the sigalg to
+                    # generate the signature as a URL param
+                    sig_alg_option_map = {'sha1': SIG_RSA_SHA1,
+                                        'sha256': SIG_RSA_SHA256}
+                    sig_alg_option = getattr(conf, '_sp_authn_requests_signed_alg', 'sha1')
+                    kwargs["sigalg"] = sig_alg_option_map[sig_alg_option]
                 session_id, result = client.prepare_for_authenticate(
                     entityid=selected_idp, relay_state=came_from,
-                    binding=binding)
+                    binding=binding, sign=False, nsprefix=nsprefix,
+                    **kwargs)
             except TypeError as e:
                 logger.error('Unable to know which IdP to use')
                 return HttpResponse(str(e))
             else:
-                http_response = HttpResponse(result['data'])
-    else:
-        raise UnsupportedBinding('Unsupported binding: %s', binding)
+                http_response = HttpResponseRedirect(get_location(result))
+        elif binding == BINDING_HTTP_POST:
+            if self.post_binding_form_template:
+                # get request XML to build our own html based on the template
+                try:
+                    location = client.sso_location(selected_idp, binding)
+                except TypeError as e:
+                    logger.error('Unable to know which IdP to use')
+                    return HttpResponse(str(e))
+                session_id, request_xml = client.create_authn_request(
+                    location,
+                    binding=binding,
+                    **kwargs)
+                try:
+                    if isinstance(request_xml, AuthnRequest):
+                        # request_xml will be an instance of AuthnRequest if the message is not signed
+                        request_xml = str(request_xml)
+                    saml_request = base64.b64encode(bytes(request_xml, 'UTF-8')).decode('utf-8')
 
-    # success, so save the session ID and return our response
-    oq_cache = OutstandingQueriesCache(request.saml_session)
-    oq_cache.set(session_id, came_from)
-    logger.debug('Saving the session_id "{}" in the OutstandingQueries cache'.format(oq_cache.__dict__))
-    return http_response
+                    http_response = render(request, self.post_binding_form_template, {
+                        'target_url': location,
+                        'params': {
+                            'SAMLRequest': saml_request,
+                            'RelayState': came_from,
+                            },
+                        })
+                except TemplateDoesNotExist:
+                    pass
+
+            if not http_response:
+                # use the html provided by pysaml2 if no template was specified or it didn't exist
+                try:
+                    session_id, result = client.prepare_for_authenticate(
+                        entityid=selected_idp, relay_state=came_from,
+                        binding=binding)
+                except TypeError as e:
+                    logger.error('Unable to know which IdP to use')
+                    return HttpResponse(str(e))
+                else:
+                    http_response = HttpResponse(result['data'])
+        else:
+            raise UnsupportedBinding('Unsupported binding: %s', binding)
+
+        # success, so save the session ID and return our response
+        oq_cache = OutstandingQueriesCache(request.saml_session)
+        oq_cache.set(session_id, came_from)
+        logger.debug('Saving the session_id "%s" in the OutstandingQueries cache', oq_cache.__dict__)
+        return http_response
 
 
+def login(request,
+          config_loader_path=None,
+          wayf_template='djangosaml2/wayf.html',
+          authorization_error_template='djangosaml2/auth_error.html',
+          post_binding_form_template='djangosaml2/post_binding_form.html'):
+    return LoginView.as_view(
+        config_loader_path=config_loader_path,
+        wayf_template=wayf_template,
+        authorization_error_template=authorization_error_template,
+        post_binding_form_template=post_binding_form_template
+        )(request)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
 class AssertionConsumerServiceView(View):
     """
     The IdP will send its response to this view, which will process it using pysaml2 and
@@ -261,14 +272,11 @@ class AssertionConsumerServiceView(View):
     though some implementations may instead register their own subclasses of Saml2Backend.
     """
 
-    @method_decorator(csrf_exempt)
-    def dispatch(self, request, *args, **kwargs):
-        """
-        This view needs to be CSRF exempt because it is called prior to login.
-        """
-        return super(AssertionConsumerServiceView, self).dispatch(request, *args, **kwargs)
+    config_loader_path = None
 
-    @method_decorator(csrf_exempt)
+    def get_sp_config(self, request: HttpRequest) -> SPConfig:
+        return get_config(self.config_loader_path, request)
+
     def post(self,
              request,
              config_loader_path=None,
@@ -282,7 +290,7 @@ class AssertionConsumerServiceView(View):
                                                {'uid': ('username', )})
         create_unknown_user = create_unknown_user or \
                               get_custom_setting('SAML_CREATE_UNKNOWN_USER', True)
-        conf = get_config(config_loader_path, request)
+        conf = self.get_sp_config(request)
         try:
             xmlstr = request.POST['SAMLResponse']
         except KeyError:
@@ -394,7 +402,7 @@ class AssertionConsumerServiceView(View):
         Subclasses can use this for customized functionality around user sessions.
         """
 
-    def customize_relay_state(self, relay_state):
+    def customize_relay_state(self, relay_state: str) -> str:
         """
         Subclasses may override this method to implement custom logic for relay state.
         """
@@ -567,14 +575,26 @@ def finish_logout(request, response, next_page=None):
         return render(request, "djangosaml2/logout_error.html", {})
 
 
-def metadata(request, config_loader_path=None, valid_for=None):
+class MetadataView(View):
     """Returns an XML with the SAML 2.0 metadata for this
     SP as configured in the settings.py file.
     """
-    conf = get_config(config_loader_path, request)
-    metadata = entity_descriptor(conf)
-    return HttpResponse(content=str(metadata).encode('utf-8'),
-                        content_type="text/xml; charset=utf8")
+
+    config_loader_path = None
+
+    def get_sp_config(self, request: HttpRequest) -> SPConfig:
+        return get_config(self.config_loader_path, request)
+
+    def get(self, request, *args, **kwargs):
+        conf = self.get_sp_config(request)
+        metadata = entity_descriptor(conf)
+        return HttpResponse(content=str(metadata).encode('utf-8'), content_type="text/xml; charset=utf8")
+
+
+def metadata(request, config_loader_path=None, valid_for=None):
+    return MetadataView.as_view(
+        config_loader_path=config_loader_path
+    )(request)
 
 
 def get_namespace_prefixes():
