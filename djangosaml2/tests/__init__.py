@@ -37,15 +37,17 @@ from djangosaml2.conf import get_config
 from djangosaml2.middleware import SamlSessionMiddleware
 from djangosaml2.signals import post_authenticated, pre_user_save
 from djangosaml2.tests import conf
-from djangosaml2.tests.auth_response import auth_response
-from djangosaml2.tests.utils import SAMLPostFormParser
-from djangosaml2.utils import (get_idp_sso_supported_bindings,
+from djangosaml2.utils import (get_custom_setting,
+                               get_idp_sso_supported_bindings,
                                get_session_id_from_saml2,
                                get_subject_id_from_saml2,
                                saml2_from_httpredirect_request)
 from djangosaml2.views import finish_logout
 from saml2.config import SPConfig
 from saml2.s_utils import decode_base64_and_inflate, deflate_and_base64_encode
+
+from .auth_response import auth_response
+from .utils import SAMLPostFormParser
 
 User = get_user_model()
 
@@ -72,7 +74,7 @@ class UtilsTests(TestCase):
             get_config('lalala.nonexisting.blabla')
 
     def test_get_config_missing_function(self):
-        with self.assertRaisesMessage(ImproperlyConfigured, 'Module "djangosaml2.tests" does not define a "nonexisting_function" config loader'):
+        with self.assertRaisesMessage(ImproperlyConfigured, 'Module "djangosaml2.tests" does not define a "nonexisting_function" attribute/class'):
             get_config('djangosaml2.tests.nonexisting_function')
 
 
@@ -138,7 +140,7 @@ class SAML2Tests(TestCase):
             metadata_file='remote_metadata_one_idp.xml',
         )
         idp_id = 'https://idp.example.com/simplesaml/saml2/idp/metadata.php'
-        self.assertEqual(list(get_idp_sso_supported_bindings())[0], list(settings.SAML_CONFIG['service']['sp']['idp'][idp_id]['single_sign_on_service'].keys())[0])
+        self.assertEqual(get_idp_sso_supported_bindings()[0], list(settings.SAML_CONFIG['service']['sp']['idp'][idp_id]['single_sign_on_service'].keys())[0])
 
     def test_get_idp_sso_supported_bindings_unknown_idp(self):
         settings.SAML_CONFIG = conf.create_conf(
@@ -592,7 +594,7 @@ ID4zT0FcZASGuthM56rRJJSx
 
         expected_metadata = expected_metadata % valid_until
 
-        response = self.client.get('/metadata/')
+        response = self.client.get(reverse('saml2_metadata'))
         self.assertEqual(response['Content-type'], 'text/xml; charset=utf8')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, expected_metadata)
@@ -642,33 +644,6 @@ ID4zT0FcZASGuthM56rRJJSx
         self.assertIsInstance(self.called[0]['user_modified'], bool, 'pre_user_save signal did not send a user_modified bool')
 
         pre_user_save.disconnect(dispatch_uid='test_signal')
-
-    def test_idplist_templatetag(self):
-        settings.SAML_CONFIG = conf.create_conf(
-            sp_host='sp.example.com',
-            idp_hosts=['idp1.example.com',
-                       'idp2.example.com',
-                       'idp3.example.com'],
-            metadata_file='remote_metadata_three_idps.xml',
-        )
-        rendered = self.render_template(
-            '{% load idplist %}'
-            '{% idplist as idps %}'
-            '{% for url, name in idps.items %}'
-            '{{ url }} - {{ name }}; '
-            '{% endfor %}'
-            )
-
-        # the idplist is unordered, so convert the result into a set.
-        rendered = set(rendered.split('; '))
-        expected = set([
-            u'https://idp1.example.com/simplesaml/saml2/idp/metadata.php - idp1.example.com IdP',
-            u'https://idp2.example.com/simplesaml/saml2/idp/metadata.php - idp2.example.com IdP',
-            u'https://idp3.example.com/simplesaml/saml2/idp/metadata.php - idp3.example.com IdP',
-            u'',
-        ])
-
-        self.assertEqual(rendered, expected)
 
     def test_sigalg_not_passed_when_not_signing_request(self):
         # monkey patch SAML configuration

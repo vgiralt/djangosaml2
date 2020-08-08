@@ -32,7 +32,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 from saml2 import BINDING_HTTP_POST, BINDING_HTTP_REDIRECT
 from saml2.client_base import LogoutError
-#  from saml2.config import SPConfig
+from saml2.config import SPConfig
 from saml2.ident import code, decode
 from saml2.mdstore import SourceNotFound
 from saml2.metadata import entity_descriptor
@@ -592,13 +592,7 @@ def metadata(request, config_loader_path=None, valid_for=None):
 
 
 def get_namespace_prefixes():
-    from saml2 import md, saml, samlp
-    try:
-        from saml2 import xmlenc
-        from saml2 import xmldsig
-    except ImportError:
-        import xmlenc
-        import xmldsig
+    from saml2 import md, saml, samlp, xmlenc, xmldsig
     return {'saml': saml.NAMESPACE,
             'samlp': samlp.NAMESPACE,
             'md': md.NAMESPACE,
