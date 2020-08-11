@@ -24,8 +24,6 @@ from django.contrib.auth.backends import ModelBackend
 from django.core.exceptions import (ImproperlyConfigured,
                                     MultipleObjectsReturned)
 
-from .signals import pre_user_save
-
 logger = logging.getLogger('djangosaml2')
 
 
@@ -143,14 +141,15 @@ class Saml2Backend(ModelBackend):
             SAML_ATTRIBUTE_MAPPING. For each attribute, if the user object has
             that field defined it will be set.
         """
-        # Always save a brand new user instance
-        user_modified = user.pk is None
 
+        # No attributes to set on the user instance, nothing to update
         if not attribute_mapping:
-            if user_modified:
-                user.save()
+            # Always save a brand new user instance
+            if user.pk is None:
+                user = self.save_user(user)
             return user
 
+        has_updated_fields = False
         for saml_attr, django_attrs in attribute_mapping.items():
             attr_value_list = attributes.get(saml_attr)
             if not attr_value_list:
@@ -167,15 +166,12 @@ class Saml2Backend(ModelBackend):
                     else:
                         modified = set_attribute(user, attr, attr_value_list[0])
 
-                    user_modified = user_modified or modified
+                    has_updated_fields = has_updated_fields or modified
                 else:
                     logger.debug('Could not find attribute "%s" on user "%s"', attr, user)
 
-        signal_modified = self.send_user_update_signal(user, attributes, user_modified)
-
-        if user_modified or signal_modified or force_save:
-            user.save()
-            logger.debug('User updated with incoming attributes')
+        if has_updated_fields or force_save:
+            user = self.save_user(user)
 
         return user
 
@@ -228,20 +224,18 @@ class Saml2Backend(ModelBackend):
 
         return user, created
 
-    def send_user_update_signal(self, user: settings.AUTH_USER_MODEL, attributes: dict, user_modified: bool) -> bool:
-        """ Send out a pre-save signal after the user has been updated with the SAML attributes.
-            This does not have to be overwritten, but depending on your custom implementation of get_or_create_user,
-            you might want to not send out this signal. In that case, just override this method to return False.
+    def save_user(self, user: settings.AUTH_USER_MODEL, *args, **kwargs) -> settings.AUTH_USER_MODEL:
+        """ Hook to add custom logic around saving a user. Return the saved user instance.
         """
-        logger.debug('Sending the pre_save signal')
-        signal_modified = any(
-            [response for receiver, response
-             in pre_user_save.send_robust(sender=user.__class__,
-                                          instance=user,
-                                          attributes=attributes,
-                                          user_modified=user_modified)]
-            )
-        return signal_modified
+        is_new_instance = user.pk is None
+        user.save()
+
+        if is_new_instance:
+            logger.debug('New user created')
+        else:
+            logger.debug('User %s updated with incoming attributes', user)
+
+        return user
 
     # ############################################
     # Backwards-compatibility stubs
