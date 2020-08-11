@@ -14,7 +14,6 @@
 # limitations under the License.
 
 import copy
-from importlib import import_module
 from typing import Callable, Optional, Union
 
 from django.conf import settings

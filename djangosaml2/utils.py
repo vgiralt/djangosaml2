@@ -15,19 +15,21 @@ import base64
 import re
 import urllib
 import zlib
+from typing import Optional
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.http import is_safe_url
 from django.utils.module_loading import import_string
+from saml2.config import SPConfig
 from saml2.s_utils import UnknownSystemEntity
 
 
-def get_custom_setting(name, default=None):
+def get_custom_setting(name: str, default=None):
     return getattr(settings, name, default)
 
 
-def available_idps(config, langpref=None):
+def available_idps(config: SPConfig, langpref=None) -> dict:
     if langpref is None:
         langpref = "en"
 
@@ -44,7 +46,7 @@ def available_idps(config, langpref=None):
     }
 
 
-def get_idp_sso_supported_bindings(idp_entity_id=None, config=None):
+def get_idp_sso_supported_bindings(idp_entity_id: Optional[str] = None, config: Optional[SPConfig] = None) -> list:
     """Returns the list of bindings supported by an IDP
     This is not clear in the pysaml2 code, so wrapping it in a util"""
     if config is None:
@@ -60,7 +62,7 @@ def get_idp_sso_supported_bindings(idp_entity_id=None, config=None):
         except IndexError:
             raise ImproperlyConfigured("No IdP configured!")
     try:
-        return meta.service(idp_entity_id, 'idpsso_descriptor', 'single_sign_on_service').keys()
+        return list(meta.service(idp_entity_id, 'idpsso_descriptor', 'single_sign_on_service').keys())
     except UnknownSystemEntity:
         return []
 
@@ -97,8 +99,7 @@ def validate_referral_url(request, url):
 
     if not is_safe_url(url=url, allowed_hosts=saml_allowed_hosts):
         return settings.LOGIN_REDIRECT_URL
-    else:
-        return url
+    return url
 
 
 def saml2_from_httpredirect_request(url):

@@ -14,13 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from djangosaml2.backends import get_saml_user_model
 from django.contrib.auth.models import User as DjangoUserModel
 from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase, override_settings
-
 from djangosaml2.backends import Saml2Backend, set_attribute
 
 from testprofiles.models import TestUser
@@ -46,6 +45,10 @@ class BackendUtilMethodsTests(TestCase):
         changed_different = set_attribute(u, 'custom_attribute', 'new_value')
         self.assertTrue(changed_different)
         self.assertEqual(u.custom_attribute, 'new_value')
+
+
+class dummyNameId:
+    text = 'dummyNameId'
 
 
 class Saml2BackendTests(TestCase):
@@ -88,15 +91,33 @@ class Saml2BackendTests(TestCase):
         with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
             self.assertEqual(self.backend._user_lookup_attribute, 'username')
 
+    def test_extract_user_identifier_params_use_nameid_present(self):
+        with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+            with override_settings(SAML_USE_NAME_ID_AS_USERNAME=True):
+                _, lookup_value = self.backend._extract_user_identifier_params({'name_id': dummyNameId()}, {}, {})
+                self.assertEqual(lookup_value, 'dummyNameId')
+
+    def test_extract_user_identifier_params_use_nameid_missing(self):
+        with override_settings(SAML_USER_MODEL='testprofiles.TestUser'):
+            with override_settings(SAML_USE_NAME_ID_AS_USERNAME=True):
+                _, lookup_value = self.backend._extract_user_identifier_params({}, {}, {})
+                self.assertEqual(lookup_value, None)
+
     def test_is_authorized(self):
         self.assertTrue(self.backend.is_authorized({}, {}, ''))
 
     def test_clean_attributes(self):
         attributes = {'random': 'dummy', 'value': 123}
         self.assertEqual(self.backend.clean_attributes(attributes, ''), attributes)
-        
+
     def test_clean_user_main_attribute(self):
         self.assertEqual(self.backend.clean_user_main_attribute('value'), 'value')
+
+    def test_update_user_simple(self):
+        u = TestUser(username='johny')
+        self.assertIsNone(u.pk)
+        u = self.backend._update_user(u, {}, {})
+        self.assertIsNotNone(u.pk)
 
     def test_update_user(self):
         attribute_mapping = {
@@ -269,6 +290,45 @@ class Saml2BackendTests(TestCase):
             logs.output,
         )
 
+    def test_deprecations(self):
+        attribute_mapping = {
+            'mail': ['email'],
+            'mail_verified': ['email_verified']
+        }
+        attributes = {
+            'mail': ['john@example.org'],
+            'mail_verified': [True],
+        }
+
+        old = self.backend.get_attribute_value('email_verified', attributes, attribute_mapping)
+        self.assertEqual(old, True)
+
+        self.assertEqual(self.backend.get_django_user_main_attribute(), self.backend._user_lookup_attribute)
+
+        with override_settings(SAML_DJANGO_USER_MAIN_ATTRIBUTE_LOOKUP='user_name'):
+            self.assertEqual(self.backend.get_django_user_main_attribute_lookup(), settings.SAML_DJANGO_USER_MAIN_ATTRIBUTE_LOOKUP)
+
+        self.assertEqual(self.backend.get_user_query_args(''), {'username'})
+
+        u = TestUser(username='mathieu')
+        self.assertEqual(u.email, '')
+        new_u = self.backend.configure_user(u, attributes, attribute_mapping)
+        self.assertIsNotNone(new_u.pk)
+        self.assertEqual(new_u.email, 'john@example.org')
+
+        u = TestUser(username='mathieu_2')
+        self.assertEqual(u.email, '')
+        new_u = self.backend.update_user(u, attributes, attribute_mapping)
+        self.assertIsNotNone(new_u.pk)
+        self.assertEqual(new_u.email, 'john@example.org')
+
+        u = TestUser()
+        self.assertTrue(self.backend._set_attribute(u, 'new_attribute', True))
+        self.assertFalse(self.backend._set_attribute(u, 'new_attribute', True))
+        self.assertTrue(self.backend._set_attribute(u, 'new_attribute', False))
+
+        self.assertEqual(get_saml_user_model(), TestUser)
+
 
 class CustomizedBackend(Saml2Backend):
     """ Override the available methods with some customized implementation to test customization
@@ -287,7 +347,9 @@ class CustomizedBackend(Saml2Backend):
 
     def clean_user_main_attribute(self, main_attribute):
         ''' Replace all spaces an dashes by underscores '''
-        return main_attribute.replace('-', '_').replace(' ', '_')
+        if main_attribute:
+            return main_attribute.replace('-', '_').replace(' ', '_')
+        return main_attribute
 
 
 class CustomizedSaml2BackendTests(Saml2BackendTests):
@@ -317,6 +379,7 @@ class CustomizedSaml2BackendTests(Saml2BackendTests):
     def test_clean_user_main_attribute(self):
         self.assertEqual(self.backend.clean_user_main_attribute('va--l__ u -e'), 'va__l___u__e')
 
+
     def test_authenticate(self):
         attribute_mapping = {
             'uid': ('username', ),
@@ -338,6 +401,27 @@ class CustomizedSaml2BackendTests(Saml2BackendTests):
         self.assertEqual(self.user.age, '')
         self.assertEqual(self.user.is_staff, False)
 
+        user = self.backend.authenticate(
+            None
+        )
+        self.assertIsNone(user)
+
+        user = self.backend.authenticate(
+            None,
+            session_info={'random': 'content'},
+            attribute_mapping=attribute_mapping,
+        )
+        self.assertIsNone(user)
+
+        attributes['is_staff'] = (False, )
+        user = self.backend.authenticate(
+            None,
+            session_info={'ava': attributes, 'issuer': 'dummy_entity_id'},
+            attribute_mapping=attribute_mapping,
+        )
+        self.assertIsNone(user)
+
+        attributes['is_staff'] = (True, )
         user = self.backend.authenticate(
             None,
             session_info={'ava': attributes, 'issuer': 'dummy_entity_id'},
