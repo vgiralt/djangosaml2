@@ -48,7 +48,6 @@ from .cache import IdentityCache, OutstandingQueriesCache, StateCache
 from .conf import get_config
 from .exceptions import IdPConfigurationMissing
 from .overrides import Saml2Client
-from .signals import post_authenticated
 from .utils import (available_idps, fail_acs_response, get_custom_setting,
                     get_idp_sso_supported_bindings, get_location,
                     validate_referral_url)
@@ -340,14 +339,8 @@ class AssertionConsumerServiceView(SPConfigMixin, View):
         auth.login(self.request, user)
         _set_subject_id(request.saml_session, session_info['name_id'])
         logger.debug("User %s authenticated via SSO.", user)
-        logger.debug('Sending the post_authenticated signal')
 
-        # post_authenticated.send_robust(sender=user, session_info=session_info)
-        # https://github.com/knaperek/djangosaml2/issues/117
-        post_authenticated.send_robust(sender=user.__class__,
-                                       instance=user,
-                                       session_info=session_info,
-                                       request=request)
+        self.post_login_hook(request, user, session_info)
         self.customize_session(user, session_info)
 
         relay_state = self.build_relay_state()
@@ -357,6 +350,11 @@ class AssertionConsumerServiceView(SPConfigMixin, View):
         relay_state = validate_referral_url(request, relay_state)
         logger.debug('Redirecting to the RelayState: %s', relay_state)
         return HttpResponseRedirect(relay_state)
+
+    def post_login_hook(self, request: HttpRequest, user: settings.AUTH_USER_MODEL, session_info: dict) -> None:
+        """ If desired, a hook to add logic after a user has succesfully logged in.
+        """
+        pass
 
     def build_relay_state(self) -> str:
         """ The relay state is a URL used to redirect the user to the view where they came from.
