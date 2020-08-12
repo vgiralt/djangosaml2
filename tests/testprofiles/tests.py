@@ -379,7 +379,6 @@ class CustomizedSaml2BackendTests(Saml2BackendTests):
     def test_clean_user_main_attribute(self):
         self.assertEqual(self.backend.clean_user_main_attribute('va--l__ u -e'), 'va__l___u__e')
 
-
     def test_authenticate(self):
         attribute_mapping = {
             'uid': ('username', ),
@@ -412,6 +411,14 @@ class CustomizedSaml2BackendTests(Saml2BackendTests):
             attribute_mapping=attribute_mapping,
         )
         self.assertIsNone(user)
+
+        with override_settings(SAML_USE_NAME_ID_AS_USERNAME=True):
+            user = self.backend.authenticate(
+                None,
+                session_info={'ava': attributes, 'issuer': 'dummy_entity_id'},
+                attribute_mapping=attribute_mapping,
+            )
+            self.assertIsNone(user)
 
         attributes['is_staff'] = (False, )
         user = self.backend.authenticate(

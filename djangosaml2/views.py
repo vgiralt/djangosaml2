@@ -108,7 +108,13 @@ class LoginView(SPConfigMixin, View):
         ''' Returns the path to put in the RelayState to redirect the user to after having logged in.
             If the user is already logged in (and if allowed), he will redirect to there immediately.
         '''
-        next_path = request.GET.get('next', settings.LOGIN_REDIRECT_URL) or settings.LOGIN_REDIRECT_URL
+
+        next_path = settings.LOGIN_REDIRECT_URL
+        if 'next' in request.GET:
+            next_path = request.GET['next']
+        elif 'RelayState' in request.GET:
+            next_path = request.GET['RelayState']
+
         next_path = validate_referral_url(request, next_path)
         return next_path
 
@@ -399,7 +405,7 @@ class EchoAttributesView(LoginRequiredMixin, SPConfigMixin, View):
         except AttributeError:
             return HttpResponse("No active SAML identity found. Are you sure you have logged in via SAML?")
 
-        return render(request, template, {'attributes': identity[0]})
+        return render(request, 'djangosaml2/echo_attributes.html', {'attributes': identity[0]})
 
 
 class LogoutInitView(LoginRequiredMixin, SPConfigMixin, View):
