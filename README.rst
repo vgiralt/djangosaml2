@@ -634,7 +634,7 @@ following url::
       #  lots of url definitions here
 
       (r'^saml2/', include('djangosaml2.urls')),
-      (r'^test/', 'djangosaml2.views.echo_attributes'),
+      (r'^test/', 'djangosaml2.views.EchoAttributesView.as_view()'),
 
       #  more url definitions
   )

@@ -729,7 +729,7 @@ class ConfTests(TestCase):
         saml_session_name = getattr(settings, 'SAML_SESSION_COOKIE_NAME', 'saml_session')
         getattr(request, saml_session_name).save()
 
-        response = views.login(request, config_loader_path)
+        response = views.LoginView.as_view(config_loader_path=config_loader_path)(request)
         self.assertEqual(response.status_code, 302)
         location = response['Location']
 

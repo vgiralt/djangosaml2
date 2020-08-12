@@ -99,8 +99,7 @@ def validate_referral_url(request, url):
 
     if not is_safe_url(url=url, allowed_hosts=saml_allowed_hosts):
         return settings.LOGIN_REDIRECT_URL
-    else:
-        return url
+    return url
 
 
 def saml2_from_httpredirect_request(url):
