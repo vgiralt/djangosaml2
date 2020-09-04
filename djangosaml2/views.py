@@ -205,7 +205,7 @@ class LoginView(SPConfigMixin, View):
                     kwargs["sigalg"] = sig_alg_option_map[sig_alg_option]
                 session_id, result = client.prepare_for_authenticate(
                     entityid=selected_idp, relay_state=next_path,
-                    binding=binding, sign=False, nsprefix=nsprefix,
+                    binding=binding, sign=sign_requests, nsprefix=nsprefix,
                     **kwargs)
             except TypeError as e:
                 logger.error('Unable to know which IdP to use')
