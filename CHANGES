@@ -1,6 +1,10 @@
 Changes
 =======
 
+TBD (TBD)
+-------------------
+- Fixed SuspiciousOperation issue in middleware (Issue #220)
+
 0.40.1 (2020-xx-yy)
 -------------------
 - [BugFix] HTTP-REDIRECT Authn Requests with optional signature now works.
