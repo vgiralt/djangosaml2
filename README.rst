@@ -153,6 +153,14 @@ Idp's like Okta require a signed logout response to validate and logout a user. 
 
    "logout_requests_signed": True,
 
+Discovery Service
+-----------------
+If you want to use a SAML Discovery Service, all you need is adding:
+
+  SAML2_DISCO_URL = 'https://your.ds.example.net/'
+
+Of course, with the real URL of your preferred Discovery Service.
+
 
 Changes in the urls.py file
 ---------------------------
