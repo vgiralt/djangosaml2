@@ -26,9 +26,11 @@ from django.http import HttpResponseServerError  # 50x
 from django.http import Http404, HttpResponse
 from django.shortcuts import render
 from django.template import TemplateDoesNotExist
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 from django.utils.decorators import method_decorator
+from django.utils.http import urlquote
 
 from saml2 import BINDING_HTTP_REDIRECT, BINDING_HTTP_POST
 from saml2.client_base import LogoutError
@@ -142,6 +144,21 @@ def login(request,
         kwargs['force_authn'] = "true"
     if getattr(conf, '_sp_allow_create', False):
         kwargs['allow_create'] = "true"
+
+    # Do we have a Discovery Service?
+    discovery_service = getattr(settings, 'SAML2_DISCO_URL', False)
+    if discovery_service:
+    if not selected_idp and discovery_service:
+            # We have to build the URL to redirect to with all the information
+            # for the Discovery Service to know how to send the flow back to us
+            login_url = request.build_absolute_uri(reverse('saml2_login'))
+            login_url = '{0}?next={1}'.format(login_url,
+                                              urlquote(came_from, safe=''))
+            ds_url = '{0}?entityID={1}&return={2}&returnIDParam=idp'
+            ds_url = ds_url.format(discovery_service,
+                                   urlquote(getattr(conf,'entityid'), safe=''),
+                                   urlquote(login_url, safe=''))
+            return HttpResponseRedirect(ds_url)
 
     # is a embedded wayf needed?
     idps = available_idps(conf)
