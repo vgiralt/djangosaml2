@@ -148,15 +148,33 @@ class LoginView(SPConfigMixin, View):
             logger.exception(msg.format(excp))
             return HttpResponse(msg.format('Please contact technical support.'), status=500)
 
-        # is a embedded wayf needed?
+        # is a embedded wayf or DiscoveryService needed?
         configured_idps = available_idps(conf)
         selected_idp = request.GET.get('idp', None)
-        if selected_idp is None and len(configured_idps) > 1:
-            logger.debug('A discovery process is needed')
-            return render(request, self.wayf_template, {
-                    'available_idps': configured_idps.items(),
-                    'came_from': next_path,
-                    })
+
+        # Do we have a Discovery Service?
+        if not selected_idp:
+            discovery_service = getattr(settings, 'SAML2_DISCO_URL', None)
+            if discovery_service:
+                # We have to build the URL to redirect to with all the information
+                # for the Discovery Service to know how to send the flow back to us
+                logger.debug(("A discovery process is needed trough a"
+                              "Discovery Service: {}").format(discovery_service))
+                login_url = request.build_absolute_uri(reverse('saml2_login'))
+                login_url = '{0}?next={1}'.format(login_url,
+                                                  urlquote(came_from, safe=''))
+                ds_url = '{0}?entityID={1}&return={2}&returnIDParam=idp'
+                ds_url = ds_url.format(discovery_service,
+                                       urlquote(getattr(conf,'entityid'), safe=''),
+                                       urlquote(login_url, safe=''))
+                return HttpResponseRedirect(ds_url)
+
+            elif len(configured_idps) > 1:
+                logger.debug('A discovery process trough WAYF page is needed')
+                return render(request, self.wayf_template, {
+                        'available_idps': configured_idps.items(),
+                        'came_from': next_path,
+                        })
 
         # is the first one, otherwise next logger message will print None
         if not configured_idps:
