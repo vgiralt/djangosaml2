@@ -140,11 +140,26 @@ For example::
   import saml2
   SAML_LOGOUT_REQUEST_PREFERRED_BINDING = saml2.BINDING_HTTP_POST
 
+Ignore Logout errors
+--------------------
+When logging out, a SAML IDP will return an error on invalid conditions, such as the IDP-side session being expired.
+Use the following setting to ignore these errors and perform a local Django logout nonetheless::
+
+  SAML_IGNORE_LOGOUT_ERRORS = True
+
 Signed Logout Request
 ------------------------
 Idp's like Okta require a signed logout response to validate and logout a user. Here's a sample config with all required SP/IDP settings::
 
    "logout_requests_signed": True,
+
+Discovery Service
+-----------------
+If you want to use a SAML Discovery Service, all you need is adding:
+
+  SAML2_DISCO_URL = 'https://your.ds.example.net/'
+
+Of course, with the real URL of your preferred Discovery Service.
 
 
 Changes in the urls.py file
@@ -491,6 +506,28 @@ settings.py::
 Learn more about Django profile models at:
 
 https://docs.djangoproject.com/en/dev/topics/auth/customizing/#substituting-a-custom-user-model
+
+
+Sometimes you need to use special logic to update the user object
+depending on the SAML2 attributes and the mapping described above
+is simply not enough. For these cases djangosaml2 provides a Django
+signal that you can listen to. In order to do so you can add the
+following code to your app::
+
+  from djangosaml2.signals import pre_user_save
+
+  def custom_update_user(sender=User, instance, attributes, user_modified, **kargs)
+     ...
+     return True  # I modified the user object
+
+
+Your handler will receive the user object, the list of SAML attributes
+and a flag telling you if the user is already modified and need
+to be saved after your handler is executed. If your handler
+modifies the user object it should return True. Otherwise it should
+return False. This way djangosaml2 will know if it should save
+the user object so you don't need to do it and no more calls to
+the save method are issued.
 
 
 IdP setup

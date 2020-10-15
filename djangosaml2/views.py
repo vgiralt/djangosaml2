@@ -99,6 +99,7 @@ class LoginView(SPConfigMixin, View):
         If set to None or nonexistent template, default form from the saml2 library
         will be rendered.
     """
+    logger.debug('Login process started')
 
     wayf_template = 'djangosaml2/wayf.html'
     authorization_error_template = 'djangosaml2/auth_error.html'
@@ -477,11 +478,12 @@ class LogoutInitView(LoginRequiredMixin, SPConfigMixin, View):
                     logger.debug('Returning form to the IdP to continue the logout process')
                     body = ''.join(http_info['data'])
                     return HttpResponse(body)
-                if binding == BINDING_HTTP_REDIRECT:
+                elif binding == BINDING_HTTP_REDIRECT:
                     logger.debug('Redirecting to the IdP to continue the logout process')
                     return HttpResponseRedirect(get_location(http_info))
-                logger.error('Unknown binding: %s', binding)
-                return HttpResponseServerError('Failed to log out')
+                else:
+                    logger.error('Unknown binding: %s', binding)
+                    return HttpResponseServerError('Failed to log out')
             # We must have had a soap logout
             return finish_logout(request, logout_info)
 
@@ -516,7 +518,11 @@ class LogoutView(SPConfigMixin, View):
 
         if 'SAMLResponse' in data:  # we started the logout
             logger.debug('Receiving a logout response from the IdP')
-            response = client.parse_logout_request_response(data['SAMLResponse'], binding)
+            try:
+                response = client.parse_logout_request_response(data['SAMLResponse'], binding)
+            except StatusError as e:
+                response = None
+                logger.warning("Error logging out from remote provider: " + str(e))
             state.sync()
             return finish_logout(request, response)
 
@@ -553,7 +559,7 @@ class LogoutView(SPConfigMixin, View):
 
 
 def finish_logout(request, response, next_page=None):
-    if response and response.status_ok():
+    if (getattr(settings, 'SAML_IGNORE_LOGOUT_ERRORS', False) or (response and response.status_ok())):
         if next_page is None and hasattr(settings, 'LOGOUT_REDIRECT_URL'):
             next_page = settings.LOGOUT_REDIRECT_URL
         logger.debug('Performing django logout with a next_page of %s', next_page)
