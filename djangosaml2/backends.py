@@ -68,7 +68,7 @@ class Saml2Backend(ModelBackend):
             return settings.SAML_DJANGO_USER_MAIN_ATTRIBUTE
         return getattr(self._user_model, 'USERNAME_FIELD', 'username')
 
-    def _extract_user_identifier_params(self, session_info, attributes, attribute_mapping) -> Tuple[str, Optional[Any]]:
+    def _extract_user_identifier_params(self, session_info: dict, attributes: dict, attribute_mapping: dict) -> Tuple[str, Optional[Any]]:
         """ Returns the attribute to perform a user lookup on, and the value to use for it.
             The value could be the name_id, or any other saml attribute from the request.
         """
@@ -89,7 +89,7 @@ class Saml2Backend(ModelBackend):
 
         return user_lookup_key, self.clean_user_main_attribute(user_lookup_value)
 
-    def _get_attribute_value(self, django_field, attributes, attribute_mapping):
+    def _get_attribute_value(self, django_field: str, attributes: dict, attribute_mapping: dict):
         saml_attribute = None
         logger.debug('attribute_mapping: %s', attribute_mapping)
         for saml_attr, django_fields in attribute_mapping.items():
@@ -136,21 +136,22 @@ class Saml2Backend(ModelBackend):
 
         return user
 
-    def _update_user(self, user, attributes, attribute_mapping, force_save=False):
+    def _update_user(self, user, attributes: dict, attribute_mapping: dict, force_save: bool = False):
         """ Update a user with a set of attributes and returns the updated user.
 
             By default it uses a mapping defined in the settings constant
             SAML_ATTRIBUTE_MAPPING. For each attribute, if the user object has
             that field defined it will be set.
         """
-        # Always save a brand new user instance
-        user_modified = user.pk is None
 
+        # No attributes to set on the user instance, nothing to update
         if not attribute_mapping:
-            if user_modified:
-                user.save()
+            # Always save a brand new user instance
+            if user.pk is None:
+                user = self.save_user(user)
             return user
 
+        has_updated_fields = False
         for saml_attr, django_attrs in attribute_mapping.items():
             attr_value_list = attributes.get(saml_attr)
             if not attr_value_list:
@@ -167,15 +168,12 @@ class Saml2Backend(ModelBackend):
                     else:
                         modified = set_attribute(user, attr, attr_value_list[0])
 
-                    user_modified = user_modified or modified
+                    has_updated_fields = has_updated_fields or modified
                 else:
                     logger.debug('Could not find attribute "%s" on user "%s"', attr, user)
 
-        signal_modified = self.send_user_update_signal(user, attributes, user_modified)
-
-        if user_modified or signal_modified or force_save:
-            user.save()
-            logger.debug('User updated with incoming attributes')
+        if has_updated_fields or force_save:
+            user = self.save_user(user)
 
         return user
 
@@ -228,20 +226,18 @@ class Saml2Backend(ModelBackend):
 
         return user, created
 
-    def send_user_update_signal(self, user: settings.AUTH_USER_MODEL, attributes: dict, user_modified: bool) -> bool:
-        """ Send out a pre-save signal after the user has been updated with the SAML attributes.
-            This does not have to be overwritten, but depending on your custom implementation of get_or_create_user,
-            you might want to not send out this signal. In that case, just override this method to return False.
+    def save_user(self, user: settings.AUTH_USER_MODEL, *args, **kwargs) -> settings.AUTH_USER_MODEL:
+        """ Hook to add custom logic around saving a user. Return the saved user instance.
         """
-        logger.debug('Sending the pre_save signal')
-        signal_modified = any(
-            [response for receiver, response
-             in pre_user_save.send_robust(sender=user.__class__,
-                                          instance=user,
-                                          attributes=attributes,
-                                          user_modified=user_modified)]
-            )
-        return signal_modified
+        is_new_instance = user.pk is None
+        user.save()
+
+        if is_new_instance:
+            logger.debug('New user created')
+        else:
+            logger.debug('User %s updated with incoming attributes', user)
+
+        return user
 
     # ############################################
     # Backwards-compatibility stubs
@@ -249,11 +245,11 @@ class Saml2Backend(ModelBackend):
 
     def get_attribute_value(self, django_field, attributes, attribute_mapping):
         warnings.warn("get_attribute_value() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)
-        self._get_attribute_value(django_field, attributes, attribute_mapping)
+        return self._get_attribute_value(django_field, attributes, attribute_mapping)
 
     def get_django_user_main_attribute(self):
         warnings.warn("get_django_user_main_attribute() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)
-        self._user_lookup_attribute
+        return self._user_lookup_attribute
 
     def get_django_user_main_attribute_lookup(self):
         warnings.warn("get_django_user_main_attribute_lookup() is deprecated, look at the Saml2Backend on how to subclass it", DeprecationWarning)

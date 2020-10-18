@@ -17,83 +17,68 @@ import base64
 import datetime
 import re
 import sys
-
-from unittest import mock, skip
+from importlib import import_module
+from unittest import mock
+from urllib.parse import parse_qs, urlparse
 
 from django.conf import settings
 from django.contrib.auth import SESSION_KEY, get_user_model
 from django.contrib.auth.models import AnonymousUser
-from django.http.request import HttpRequest
+from django.core.exceptions import ImproperlyConfigured
 from django.template import Context, Template
-from django.test import TestCase, Client
+from django.test import Client, TestCase, override_settings
 from django.test.client import RequestFactory
+from django.urls import reverse
+from django.utils.encoding import force_text
 from djangosaml2 import views
 from djangosaml2.cache import OutstandingQueriesCache
 from djangosaml2.conf import get_config
 from djangosaml2.middleware import SamlSessionMiddleware
-from djangosaml2.signals import post_authenticated, pre_user_save
 from djangosaml2.tests import conf
-from djangosaml2.tests.utils import SAMLPostFormParser
-from djangosaml2.tests.auth_response import auth_response
-from djangosaml2.views import finish_logout
-from djangosaml2.utils import (saml2_from_httpredirect_request,
+from djangosaml2.utils import (get_idp_sso_supported_bindings,
                                get_session_id_from_saml2,
-                               get_subject_id_from_saml2)
-from importlib import import_module
+                               get_subject_id_from_saml2,
+                               saml2_from_httpredirect_request)
+from djangosaml2.views import (EchoAttributesView, _set_subject_id,
+                               finish_logout)
 from saml2.config import SPConfig
 from saml2.s_utils import decode_base64_and_inflate, deflate_and_base64_encode
 
-try:
-    from django.urls import reverse
-except ImportError:
-    from django.core.urlresolvers import reverse
-try:
-    from django.utils.encoding import force_text
-except ImportError:
-    from django.utils.text import force_text
-try:
-    from django.utils.six.moves.urllib.parse import urlparse, parse_qs
-except ImportError:
-    from urllib.parse import urlparse, parse_qs
-
+from .auth_response import auth_response
+from .utils import SAMLPostFormParser
 
 User = get_user_model()
 
 PY_VERSION = sys.version_info[:2]
 
 
+def dummy_loader(request):
+    return 'dummy_loader'
+
+
+non_callable = 'just a string'
+
+
+class UtilsTests(TestCase):
+    def test_get_config_valid_path(self):
+        self.assertEqual(get_config('djangosaml2.tests.dummy_loader'), 'dummy_loader')
+
+    def test_get_config_wrongly_formatted_path(self):
+        with self.assertRaisesMessage(ImproperlyConfigured, 'SAML config loader must be a callable object.'):
+            get_config('djangosaml2.tests.non_callable')
+
+    def test_get_config_nonsense_path(self):
+        with self.assertRaisesMessage(ImproperlyConfigured, 'Error importing SAML config loader lalala.nonexisting.blabla: "No module named \'lalala\'"'):
+            get_config('lalala.nonexisting.blabla')
+
+    def test_get_config_missing_function(self):
+        with self.assertRaisesMessage(ImproperlyConfigured, 'Module "djangosaml2.tests" does not define a "nonexisting_function" attribute/class'):
+            get_config('djangosaml2.tests.nonexisting_function')
+
+
 class SAML2Tests(TestCase):
 
     urls = 'djangosaml2.tests.urls'
-
-    def setUp(self):
-        if hasattr(settings, 'SAML_ATTRIBUTE_MAPPING'):
-            self.actual_attribute_mapping = settings.SAML_ATTRIBUTE_MAPPING
-            del settings.SAML_ATTRIBUTE_MAPPING
-        if hasattr(settings, 'SAML_CONFIG_LOADER'):
-            self.actual_conf_loader = settings.SAML_CONFIG_LOADER
-            del settings.SAML_CONFIG_LOADER
-
-    def tearDown(self):
-        if hasattr(self, 'actual_attribute_mapping'):
-            settings.SAML_ATTRIBUTE_MAPPING = self.actual_attribute_mapping
-        if hasattr(self, 'actual_conf_loader'):
-            settings.SAML_CONFIG_LOADER = self.actual_conf_loader
-
-    def assertSAMLRequestsEquals(self, real_xml, expected_xmls):
-
-        def remove_variable_attributes(xml_string):
-            xml_string = re.sub(r' ID=".*?" ', ' ', xml_string)
-            xml_string = re.sub(r' IssueInstant=".*?" ', ' ', xml_string)
-            xml_string = re.sub(
-                r'<saml:NameID(.*)>.*</saml:NameID>',
-                r'<saml:NameID\1></saml:NameID>',
-                xml_string)
-
-            return xml_string
-
-        self.assertEqual(remove_variable_attributes(real_xml),
-                         remove_variable_attributes(expected_xmls))
 
     def init_cookies(self):
         self.client.cookies[settings.SESSION_COOKIE_NAME] = 'testing'
@@ -105,17 +90,40 @@ class SAML2Tests(TestCase):
         self.saml_session.save()
         self.oq_cache = OutstandingQueriesCache(self.saml_session)
 
-        self.oq_cache.set(session_id \
+        self.oq_cache.set(session_id
                           if isinstance(session_id, str) else session_id.decode(),
                           came_from)
         self.saml_session.save()
         self.client.cookies[settings.SESSION_COOKIE_NAME] = self.saml_session.session_key
 
-    def render_template(self, text):
-        return Template(text).render(Context())
-
     def b64_for_post(self, xml_text, encoding='utf-8'):
         return base64.b64encode(xml_text.encode(encoding)).decode('ascii')
+
+    def test_get_idp_sso_supported_bindings_noargs(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_one_idp.xml',
+        )
+        idp_id = 'https://idp.example.com/simplesaml/saml2/idp/metadata.php'
+        self.assertEqual(get_idp_sso_supported_bindings()[0], list(settings.SAML_CONFIG['service']['sp']['idp'][idp_id]['single_sign_on_service'].keys())[0])
+
+    def test_get_idp_sso_supported_bindings_unknown_idp(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_one_idp.xml',
+        )
+        self.assertEqual(get_idp_sso_supported_bindings(idp_entity_id='random'), [])
+
+    def test_get_idp_sso_supported_bindings_no_idps(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=[],
+            metadata_file='remote_metadata_no_idp.xml',
+        )
+        with self.assertRaisesMessage(ImproperlyConfigured, "No IdP configured!"):
+            get_idp_sso_supported_bindings()
 
     def test_unsigned_post_authn_request(self):
         """
@@ -140,8 +148,7 @@ class SAML2Tests(TestCase):
         saml_request = response_parser.saml_request_value
 
         self.assertIsNotNone(saml_request)
-        if 'AuthnRequest xmlns' not in base64.b64decode(saml_request).decode('utf-8'):
-            raise Exception('test_unsigned_post_authn_request: Not a valid AuthnRequest')
+        self.assertIn('AuthnRequest xmlns', base64.b64decode(saml_request).decode('utf-8'))
 
     def test_login_evil_redirect(self):
         """
@@ -156,6 +163,24 @@ class SAML2Tests(TestCase):
             metadata_file='remote_metadata_one_idp.xml',
         )
         response = self.client.get(reverse('saml2_login') + '?next=http://evil.com')
+        url = urlparse(response['Location'])
+        params = parse_qs(url.query)
+
+        self.assertEqual(params['RelayState'], [settings.LOGIN_REDIRECT_URL, ])
+
+    def test_no_redirect(self):
+        """
+        Make sure that if we give an empty path as the next parameter,
+        it is replaced with the default LOGIN_REDIRECT_URL.
+        """
+
+        # monkey patch SAML configuration
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_one_idp.xml',
+        )
+        response = self.client.get(reverse('saml2_login') + '?next=')
         url = urlparse(response['Location'])
         params = parse_qs(url.query)
 
@@ -182,8 +207,7 @@ class SAML2Tests(TestCase):
         self.assertIn('RelayState', params)
 
         saml_request = params['SAMLRequest'][0]
-        if 'AuthnRequest xmlns' not in decode_base64_and_inflate(saml_request).decode('utf-8'):
-            raise Exception('Not a valid AuthnRequest')
+        self.assertIn('AuthnRequest xmlns', decode_base64_and_inflate(saml_request).decode('utf-8'))
 
         # if we set a next arg in the login view, it is preserverd
         # in the RelayState argument
@@ -233,9 +257,7 @@ class SAML2Tests(TestCase):
         self.assertIn('RelayState', params)
 
         saml_request = params['SAMLRequest'][0]
-        if 'AuthnRequest xmlns' not in decode_base64_and_inflate(saml_request).decode('utf-8'):
-            raise Exception('Not a valid AuthnRequest')
-
+        self.assertIn('AuthnRequest xmlns', decode_base64_and_inflate(saml_request).decode('utf-8'))
 
     def test_assertion_consumer_service(self):
         # Get initial number of users
@@ -292,6 +314,27 @@ class SAML2Tests(TestCase):
         # as the RelayState is empty we have redirect to LOGIN_REDIRECT_URL
         self.assertEqual(url.path, settings.LOGIN_REDIRECT_URL)
         self.assertEqual(force_text(new_user.id), client.session[SESSION_KEY])
+
+    def test_assertion_consumer_service_already_logged_in_allowed(self):
+        self.client.force_login(User.objects.create(username='user', password='pass'))
+
+        settings.SAML_IGNORE_AUTHENTICATED_USERS_ON_LOGIN = True
+
+        came_from = '/dummy-url/'
+        response = self.client.get(reverse('saml2_login') + f'?next={came_from}')
+        self.assertEqual(response.status_code, 302)
+        url = urlparse(response['Location'])
+        self.assertEqual(url.path, came_from)
+
+    def test_assertion_consumer_service_already_logged_in_error(self):
+        self.client.force_login(User.objects.create(username='user', password='pass'))
+
+        settings.SAML_IGNORE_AUTHENTICATED_USERS_ON_LOGIN = False
+
+        came_from = '/dummy-url/'
+        response = self.client.get(reverse('saml2_login') + f'?next={came_from}')
+        self.assertEqual(response.status_code, 200)
+        self.assertInHTML("<p>You are already logged in and you are trying to go to the login page again.</p>", response.content.decode())
 
     def test_assertion_consumer_service_no_session(self):
         settings.SAML_CONFIG = conf.create_conf(
@@ -361,7 +404,47 @@ class SAML2Tests(TestCase):
         self.assertEqual(response.status_code, 302)
         return subject_id
 
-    @skip("This is a known issue caused by pysaml2. Needs more investigation. Fixes are welcome.")
+    def test_echo_view_no_saml_session(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_one_idp.xml',
+        )
+        self.do_login()
+
+        request = RequestFactory().get('/bar/foo')
+        request.COOKIES = self.client.cookies
+        request.user = User.objects.last()
+
+        middleware = SamlSessionMiddleware()
+        middleware.process_request(request)
+
+        response = EchoAttributesView.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content.decode(), 'No active SAML identity found. Are you sure you have logged in via SAML?')
+
+    def test_echo_view_success(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host='sp.example.com',
+            idp_hosts=['idp.example.com'],
+            metadata_file='remote_metadata_one_idp.xml',
+        )
+        self.do_login()
+
+        request = RequestFactory().get('/')
+        request.user = User.objects.last()
+
+        middleware = SamlSessionMiddleware()
+        middleware.process_request(request)
+
+        saml_session_name = getattr(settings, 'SAML_SESSION_COOKIE_NAME', 'saml_session')
+        getattr(request, saml_session_name)['_saml2_subject_id'] = '1f87035b4c1325b296a53d92097e6b3fa36d7e30ee82e3fcb0680d60243c1f03'
+        getattr(request, saml_session_name).save()
+        
+        response = EchoAttributesView.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('<h1>SAML attributes</h1>', response.content.decode(), 'Echo page not rendered')
+
     def test_logout(self):
         settings.SAML_CONFIG = conf.create_conf(
             sp_host='sp.example.com',
@@ -384,10 +467,7 @@ class SAML2Tests(TestCase):
 
         saml_request = params['SAMLRequest'][0]
 
-        if 'LogoutRequest xmlns' not in decode_base64_and_inflate(saml_request).decode('utf-8'):
-            raise Exception('Not a valid LogoutRequest')
-
-
+        self.assertIn('LogoutRequest xmlns', decode_base64_and_inflate(saml_request).decode('utf-8'), 'Not a valid LogoutRequest')
 
     def test_logout_service_local(self):
         settings.SAML_CONFIG = conf.create_conf(
@@ -411,8 +491,8 @@ class SAML2Tests(TestCase):
         self.assertIn('SAMLRequest', params)
 
         saml_request = params['SAMLRequest'][0]
-        if 'LogoutRequest xmlns' not in decode_base64_and_inflate(saml_request).decode('utf-8'):
-            raise Exception('Not a valid LogoutRequest')
+
+        self.assertIn('LogoutRequest xmlns', decode_base64_and_inflate(saml_request).decode('utf-8'), 'Not a valid LogoutRequest')
 
         # now simulate a logout response sent by the idp
         expected_request = """<samlp:LogoutRequest xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="XXXXXXXXXXXXXXXXXXXXXX" Version="2.0" Destination="https://idp.example.com/simplesaml/saml2/idp/SingleLogoutService.php" Reason=""><saml:Issuer Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity">http://sp.example.com/saml2/metadata/</saml:Issuer><saml:NameID SPNameQualifier="http://sp.example.com/saml2/metadata/" Format="urn:oasis:names:tc:SAML:2.0:nameid-format:transient">1f87035b4c1325b296a53d92097e6b3fa36d7e30ee82e3fcb0680d60243c1f03</saml:NameID><samlp:SessionIndex>a0123456789abcdef0123456789abcdef</samlp:SessionIndex></samlp:LogoutRequest>"""
@@ -459,8 +539,7 @@ class SAML2Tests(TestCase):
         self.assertIn('SAMLResponse', params)
         saml_response = params['SAMLResponse'][0]
 
-        if 'Response xmlns' not in decode_base64_and_inflate(saml_response).decode('utf-8'):
-            raise Exception('Not a valid Response')
+        self.assertIn('Response xmlns', decode_base64_and_inflate(saml_response).decode('utf-8'), 'Not a valid Response')
 
     def test_incomplete_logout(self):
         settings.SAML_CONFIG = conf.create_conf(sp_host='sp.example.com',
@@ -482,115 +561,6 @@ class SAML2Tests(TestCase):
         request = RequestFactory().get('/bar/foo')
         response = finish_logout(request, None)
         self.assertContains(response, "<h1>Logout error</h1>", status_code=200)
-
-    def _test_metadata(self):
-        settings.SAML_CONFIG = conf.create_conf(
-            sp_host='sp.example.com',
-            idp_hosts=['idp.example.com'],
-            metadata_file='remote_metadata_one_idp.xml',
-        )
-        valid_until = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
-        valid_until = valid_until.strftime("%Y-%m-%dT%H:%M:%SZ")
-        expected_metadata = """<?xml version='1.0' encoding='UTF-8'?>
-<md:EntityDescriptor entityID="http://sp.example.com/saml2/metadata/" validUntil="%s" xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"><md:SPSSODescriptor AuthnRequestsSigned="false" WantAssertionsSigned="true" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:KeyDescriptor><ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:X509Data><ds:X509Certificate>MIIDPjCCAiYCCQCkHjPQlll+mzANBgkqhkiG9w0BAQUFADBhMQswCQYDVQQGEwJF
-UzEQMA4GA1UECBMHU2V2aWxsYTEbMBkGA1UEChMSWWFjbyBTaXN0ZW1hcyBTLkwu
-MRAwDgYDVQQHEwdTZXZpbGxhMREwDwYDVQQDEwh0aWNvdGljbzAeFw0wOTEyMDQx
-OTQzNTJaFw0xMDEyMDQxOTQzNTJaMGExCzAJBgNVBAYTAkVTMRAwDgYDVQQIEwdT
-ZXZpbGxhMRswGQYDVQQKExJZYWNvIFNpc3RlbWFzIFMuTC4xEDAOBgNVBAcTB1Nl
-dmlsbGExETAPBgNVBAMTCHRpY290aWNvMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
-MIIBCgKCAQEA7rMOMOaIZ/YYD5hYS6Hpjpovcu4k8gaIY+om9zCxLV5F8BLEfkxo
-Pk9IA3cRQNRxf7AXCFxEOH3nKy56AIi1gU7X6fCT30JBT8NQlYdgOVMLlR+tjy1b
-YV07tDa9U8gzjTyKQHgVwH0436+rmSPnacGj3fMwfySTMhtmrJmax0bIa8EB+gY1
-77DBtvf8dIZIXLlGMQFloZeUspvHOrgNoEA9xU4E9AanGnV9HeV37zv3mLDUOQLx
-4tk9sMQmylCpij7WZmcOV07DyJ/cEmnvHSalBTcyIgkcwlhmjtSgfCy6o5zuWxYd
-T9ia80SZbWzn8N6B0q+nq23+Oee9H0lvcwIDAQABMA0GCSqGSIb3DQEBBQUAA4IB
-AQCQBhKOqucJZAqGHx4ybDXNzpPethszonLNVg5deISSpWagy55KlGCi5laio/xq
-hHRx18eTzeCeLHQYvTQxw0IjZOezJ1X30DD9lEqPr6C+IrmZc6bn/pF76xsvdaRS
-gduNQPT1B25SV2HrEmbf8wafSlRARmBsyUHh860TqX7yFVjhYIAUF/El9rLca51j
-ljCIqqvT+klPdjQoZwODWPFHgute2oNRmoIcMjSnoy1+mxOC2Q/j7kcD8/etulg2
-XDxB3zD81gfdtT8VBFP+G4UrBa+5zFk6fT6U8a7ZqVsyH+rCXAdCyVlEC4Y5fZri
-ID4zT0FcZASGuthM56rRJJSx
-</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor><md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="http://sp.example.com/saml2/ls/" /><md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="http://sp.example.com/saml2/acs/" index="1" /><md:AttributeConsumingService index="1"><md:ServiceName xml:lang="en">Test SP</md:ServiceName><md:RequestedAttribute FriendlyName="uid" Name="urn:oid:0.9.2342.19200300.100.1.1" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri" isRequired="true" /><md:RequestedAttribute FriendlyName="eduPersonAffiliation" Name="urn:oid:1.3.6.1.4.1.5923.1.1.1.1" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri" isRequired="false" /></md:AttributeConsumingService></md:SPSSODescriptor><md:Organization><md:OrganizationName xml:lang="es">Ejemplo S.A.</md:OrganizationName><md:OrganizationName xml:lang="en">Example Inc.</md:OrganizationName><md:OrganizationDisplayName xml:lang="es">Ejemplo</md:OrganizationDisplayName><md:OrganizationDisplayName xml:lang="en">Example</md:OrganizationDisplayName><md:OrganizationURL xml:lang="es">http://www.example.es</md:OrganizationURL><md:OrganizationURL xml:lang="en">http://www.example.com</md:OrganizationURL></md:Organization><md:ContactPerson contactType="technical"><md:Company>Example Inc.</md:Company><md:GivenName>Technical givenname</md:GivenName><md:SurName>Technical surname</md:SurName><md:EmailAddress>technical@sp.example.com</md:EmailAddress></md:ContactPerson><md:ContactPerson contactType="administrative"><md:Company>Example Inc.</md:Company><md:GivenName>Administrative givenname</md:GivenName><md:SurName>Administrative surname</md:SurName><md:EmailAddress>administrative@sp.example.ccom</md:EmailAddress></md:ContactPerson></md:EntityDescriptor>"""
-
-        expected_metadata = expected_metadata % valid_until
-
-        response = self.client.get('/metadata/')
-        self.assertEqual(response['Content-type'], 'text/xml; charset=utf8')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.content, expected_metadata)
-
-    def test_post_authenticated_signal(self):
-        self.called = []
-
-        def signal_handler(sender, instance, session_info, request, **kwargs):
-            self.called.append({'sender': sender, 'instance': instance, 'request': request, 'session_info': session_info})
-
-        post_authenticated.connect(signal_handler, dispatch_uid='test_signal')
-
-        self.do_login()
-
-        # make sure the handler is only called once
-        self.assertEqual(len(self.called), 1)
-        # test 'sender', this should be User.__class__
-        self.assertEqual(self.called[0]['sender'], get_user_model(), 'post_authenticated signal sender is not a User')
-        # test 'instance', this should be User
-        self.assertIsInstance(self.called[0]['instance'], get_user_model(), 'post_authenticated signal did not send a User instance')
-        # test the request
-        self.assertIsInstance(self.called[0]['request'], HttpRequest, 'post_authenticated signal did not send a request')
-        # test the session_info
-        self.assertIsInstance(self.called[0]['session_info'], dict, 'post_authenticated signal did not send a session_info dict')
-
-        post_authenticated.disconnect(dispatch_uid='test_signal')
-
-    def test_pre_user_save_signal(self):
-        self.called = []
-
-        def signal_handler(sender, instance, attributes, user_modified, **kwargs):
-            self.called.append({'sender': sender, 'instance': instance, 'attributes': attributes, 'user_modified': user_modified})
-
-        pre_user_save.connect(signal_handler, dispatch_uid='test_signal')
-
-        self.do_login()
-
-        # make sure the handler is only called once
-        self.assertEqual(len(self.called), 1)
-        # test 'sender', this should be User.__class__
-        self.assertEqual(self.called[0]['sender'], get_user_model(), 'pre_user_save signal sender is not a User')
-        # test 'instance', this should be User
-        self.assertIsInstance(self.called[0]['instance'], get_user_model(), 'pre_user_save signal did not send a User instance')
-        # test the attributes
-        self.assertIsInstance(self.called[0]['attributes'], dict, 'pre_user_save signal did not send attributes')
-        # test the user_modified
-        self.assertIsInstance(self.called[0]['user_modified'], bool, 'pre_user_save signal did not send a user_modified bool')
-
-        pre_user_save.disconnect(dispatch_uid='test_signal')
-
-    def test_idplist_templatetag(self):
-        settings.SAML_CONFIG = conf.create_conf(
-            sp_host='sp.example.com',
-            idp_hosts=['idp1.example.com',
-                       'idp2.example.com',
-                       'idp3.example.com'],
-            metadata_file='remote_metadata_three_idps.xml',
-        )
-        rendered = self.render_template(
-            '{% load idplist %}'
-            '{% idplist as idps %}'
-            '{% for url, name in idps.items %}'
-            '{{ url }} - {{ name }}; '
-            '{% endfor %}'
-            )
-
-        # the idplist is unordered, so convert the result into a set.
-        rendered = set(rendered.split('; '))
-        expected = set([
-            u'https://idp1.example.com/simplesaml/saml2/idp/metadata.php - idp1.example.com IdP',
-            u'https://idp2.example.com/simplesaml/saml2/idp/metadata.php - idp2.example.com IdP',
-            u'https://idp3.example.com/simplesaml/saml2/idp/metadata.php - idp3.example.com IdP',
-            u'',
-        ])
-
-        self.assertEqual(rendered, expected)
 
     def test_sigalg_not_passed_when_not_signing_request(self):
         # monkey patch SAML configuration
@@ -636,6 +606,12 @@ def test_config_loader(request):
     return config
 
 
+def test_config_loader_callable(request):
+    config = SPConfig()
+    config.load({'entityid': 'testentity_callable'})
+    return config
+
+
 def test_config_loader_with_real_conf(request):
     config = SPConfig()
     config.load(conf.create_conf(sp_host='sp.example.com',
@@ -653,6 +629,13 @@ class ConfTests(TestCase):
 
         self.assertEqual(conf.entityid, 'testentity')
 
+    def test_custom_conf_loader_callable(self):
+        config_loader_path = test_config_loader_callable
+        request = RequestFactory().get('/bar/foo')
+        conf = get_config(config_loader_path, request)
+
+        self.assertEqual(conf.entityid, 'testentity_callable')
+
     def test_custom_conf_loader_from_view(self):
         config_loader_path = 'djangosaml2.tests.test_config_loader_with_real_conf'
         request = RequestFactory().get('/login/')
@@ -663,10 +646,83 @@ class ConfTests(TestCase):
         saml_session_name = getattr(settings, 'SAML_SESSION_COOKIE_NAME', 'saml_session')
         getattr(request, saml_session_name).save()
 
-        response = views.login(request, config_loader_path)
+        response = views.LoginView.as_view(config_loader_path=config_loader_path)(request)
         self.assertEqual(response.status_code, 302)
         location = response['Location']
 
         url = urlparse(location)
         self.assertEqual(url.hostname, 'idp.example.com')
         self.assertEqual(url.path, '/simplesaml/saml2/idp/SSOService.php')
+
+
+class SessionEnabledTestCase(TestCase):
+    def get_session(self):
+        engine = import_module(settings.SESSION_ENGINE)
+        session = self.client.session or engine.SessionStore()
+        return session
+
+    def set_session_cookies(self, session):
+        # Set the cookie to represent the session
+        session_cookie = settings.SESSION_COOKIE_NAME
+        self.client.cookies[session_cookie] = session.session_key
+        cookie_data = {
+            'max-age': None,
+            'path': '/',
+            'domain': settings.SESSION_COOKIE_DOMAIN,
+            'secure': settings.SESSION_COOKIE_SECURE or None,
+            'expires': None}
+        self.client.cookies[session_cookie].update(cookie_data)
+
+
+class MiddlewareTests(SessionEnabledTestCase):
+    def test_middleware_cookie_expireatbrowserclose(self):
+        with override_settings(SESSION_EXPIRE_AT_BROWSER_CLOSE=True):
+            session = self.get_session()
+            session.save()
+            self.set_session_cookies(session)
+
+            config_loader_path = 'djangosaml2.tests.test_config_loader_with_real_conf'
+            request = RequestFactory().get('/login/')
+            request.user = AnonymousUser()
+            request.session = session
+            middleware = SamlSessionMiddleware()
+            middleware.process_request(request)
+
+            saml_session_name = getattr(settings, 'SAML_SESSION_COOKIE_NAME', 'saml_session')
+            getattr(request, saml_session_name).save()
+
+            response = views.LoginView.as_view(config_loader_path=config_loader_path)(request)
+
+            response = middleware.process_response(request, response)
+
+            cookie = response.cookies[saml_session_name]
+
+            self.assertEqual(cookie['expires'], '')
+            self.assertEqual(cookie['max-age'], '')
+
+    def test_middleware_cookie_with_expiry(self):
+        with override_settings(SESSION_EXPIRE_AT_BROWSER_CLOSE=False):
+            session = self.get_session()
+            session.save()
+            self.set_session_cookies(session)
+
+            config_loader_path = 'djangosaml2.tests.test_config_loader_with_real_conf'
+            request = RequestFactory().get('/login/')
+            request.user = AnonymousUser()
+            request.session = session
+            middleware = SamlSessionMiddleware()
+            middleware.process_request(request)
+
+            saml_session_name = getattr(settings, 'SAML_SESSION_COOKIE_NAME', 'saml_session')
+            getattr(request, saml_session_name).save()
+
+            response = views.LoginView.as_view(config_loader_path=config_loader_path)(request)
+
+            response = middleware.process_response(request, response)
+
+            cookie = response.cookies[saml_session_name]
+
+            self.assertIsNotNone(cookie['expires'])
+
+            self.assertNotEqual(cookie['expires'], '')
+            self.assertNotEqual(cookie['max-age'], '')

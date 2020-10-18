@@ -1,6 +1,14 @@
 Changes
 =======
 
+v1.0.0 (2020-10-15)
+-------------------
+- General refactor with Django ClassViews
+
+0.50.0 (2020-10-15)
+-------------------
+- Discovery Service support
+
 0.40.1 (2020-09-08)
 -------------------
 - [BugFix] HTTP-REDIRECT Authn Requests with optional signature now works.
